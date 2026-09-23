@@ -1,0 +1,607 @@
+From 7f4866dc938ffe25167c8e1d3509880204060e9f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 23 Sep 2026 12:57:59 +0200
+Subject: [PATCH] Visu responsiv einpassen, zentrale Funktionen per Sprache
+ steuerbar
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- Iframe füllt den verfügbaren Platz (Visu ist responsiv), optionale feste Grösse wird eingepasst statt abgeschnitten
+- Gerätekatalog liest auch Buttons in Gruppen (Ferien, Heizung)
+- Neu per Sprache: Heizungsabsenkung (inkl. Tage), Anwesenheitssimulation, Heiz-/Kühlbetrieb, Lüftungsstufen, Sauna-Modus und Sollwerte
+- 'Alles aus' nur mit 'alles', nicht bei jedem 'aus'
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_011y8Ws5v8ymJCRyKdyK7Eo3
+---
+ README.md         |  13 ++++
+ app.js            |  96 ++++++++++++++++++++-----
+ device-catalog.js |  32 +++++++--
+ index.html        |   4 +-
+ nlu-llm.js        |   8 ++-
+ nlu-local.js      | 178 +++++++++++++++++++++++++++++++++++++++++++---
+ ws-control.js     |  12 ++++
+ 7 files changed, 309 insertions(+), 34 deletions(-)
+
+diff --git a/README.md b/README.md
+index 58a45f0..7f49a50 100644
+--- a/README.md
++++ b/README.md
+@@ -19,3 +19,16 @@ python3 -m http.server 8080
+ ```
+ 
+ und dann `http://localhost:8080` öffnen.
++
++## Zentrale Sprachbefehle (Beispiele)
++
++| Funktion | Beispiele |
++|---|---|
++| Lichtszenen | „Alles aus“, „Heimkommen“, „Szene Abend“, „Nacht“ |
++| Storen / Markisen gesamt | „Alle Storen hoch“, „Alle Storen im OG runter“, „Alle Markisen einfahren“ |
++| Heizungsabsenkung (Ferien) | „Absenkung ein/aus“, „Ferienmodus für 5 Tage“, „Absenkung für zwei Wochen“ |
++| Anwesenheitssimulation | „Simulation ein“, „Anwesenheitssimulation ausschalten“ |
++| Heiz-/Kühlbetrieb | „Heizbetrieb ein“, „Kühlbetrieb aus“ |
++| Lüftung | „Lüftung Stufe 2“, „Lüftung aus“, „Lüftung höher/tiefer“, „Lüftung maximal“ |
++| Sauna | „Sauna ein/aus“, „Sanarium einschalten“, „Sauna auf 85 Grad“, „Sauna Badezeit 90 Minuten“ |
++| Raumtemperatur | „Wohnen 22 Grad“, „Wohnen wärmer/kühler“ |
+diff --git a/app.js b/app.js
+index 92d73dc..3e0f838 100644
+--- a/app.js
++++ b/app.js
+@@ -23,34 +23,58 @@
+ 
+   const HEATING_STEP = 0.5;
+ 
+-  // --- Iframe-Skalierung (die Visu ist eine feste Pixel-Canvas ohne responsives Layout) ---
++  // --- Iframe-Darstellung ---
++  // Die Visu passt ihr Layout selbst an die Fenstergrösse an (responsiv). Standard:
++  // Iframe füllt einfach den verfügbaren Platz – nichts wird abgeschnitten oder verzerrt.
++  // Optional: feste native Grösse, die dann proportional eingepasst wird (ganz sichtbar).
+ 
+-  const SCALE_W_KEY = "speak-app.nativeWidth";
+-  const SCALE_H_KEY = "speak-app.nativeHeight";
+-  const DEFAULT_NATIVE_WIDTH = 1024;
+-  const DEFAULT_NATIVE_HEIGHT = 600;
++  const SCALE_W_KEY = "speak-app.fixedWidth";
++  const SCALE_H_KEY = "speak-app.fixedHeight";
+ 
+   const visuFrame = document.getElementById("visuFrame");
+   const visuWrapper = document.getElementById("visuWrapper");
+ 
+   function loadScaleSettings() {
+-    const w = parseInt(localStorage.getItem(SCALE_W_KEY), 10) || DEFAULT_NATIVE_WIDTH;
+-    const h = parseInt(localStorage.getItem(SCALE_H_KEY), 10) || DEFAULT_NATIVE_HEIGHT;
++    let w = 0;
++    let h = 0;
++    try {
++      w = parseInt(localStorage.getItem(SCALE_W_KEY), 10) || 0;
++      h = parseInt(localStorage.getItem(SCALE_H_KEY), 10) || 0;
++    } catch (err) {
++      // ignore
++    }
+     return { w, h };
+   }
+ 
+   function saveScaleSettings(w, h) {
+-    localStorage.setItem(SCALE_W_KEY, String(w));
+-    localStorage.setItem(SCALE_H_KEY, String(h));
++    try {
++      if (w && h) {
++        localStorage.setItem(SCALE_W_KEY, String(w));
++        localStorage.setItem(SCALE_H_KEY, String(h));
++      } else {
++        localStorage.removeItem(SCALE_W_KEY);
++        localStorage.removeItem(SCALE_H_KEY);
++      }
++    } catch (err) {
++      // ignore
++    }
+   }
+ 
+   function applyIframeScale() {
+     const { w, h } = loadScaleSettings();
+-    visuFrame.style.width = w + "px";
+-    visuFrame.style.height = h + "px";
++    if (!w || !h) {
++      visuFrame.style.width = "100%";
++      visuFrame.style.height = "100%";
++      visuFrame.style.transform = "none";
++      visuFrame.style.left = "0";
++      return;
++    }
+     const containerW = visuWrapper.clientWidth;
+     const containerH = visuWrapper.clientHeight;
+-    const scale = Math.max(containerW / w, containerH / h);
++    const scale = Math.min(containerW / w, containerH / h); // einpassen statt abschneiden
++    visuFrame.style.width = w + "px";
++    visuFrame.style.height = h + "px";
++    visuFrame.style.left = Math.max(0, (containerW - w * scale) / 2) + "px";
+     visuFrame.style.transform = "scale(" + scale + ")";
+   }
+ 
+@@ -74,7 +98,8 @@
+   }
+ 
+   function registerHeatingZones() {
+-    const zones = new Set([...MappingStore.allHeatingZones(), ...DeviceCatalog.heatingZones()]);
++    const setpointZones = DeviceCatalog.all().filter((d) => d.kind === "setpoint").map((d) => d.zone);
++    const zones = new Set([...MappingStore.allHeatingZones(), ...DeviceCatalog.heatingZones(), ...setpointZones]);
+     for (const zone of zones) {
+       try {
+         WsControl.heatingRegister(zone);
+@@ -197,6 +222,43 @@
+       WsControl.toggle(b, e);
+       return "";
+     }
++    if (d.kind === "reduction") {
++      const days = a.op === "set" ? a.value : a.value || 0;
++      WsControl.heatingReduction(a.op !== "off", days);
++      return "";
++    }
++    if (d.kind === "ventilation" || d.kind === "mode") {
++      const steps = d.steps || [];
++      if (!steps.length) throw new Error("Keine Stufen bekannt");
++      const st = WsControl.getScState(b, e);
++      const curIdx = st && typeof st.value === "number" ? steps.findIndex((x) => x.value === st.value) : -1;
++      let target;
++      if (a.op === "set") target = steps.find((x) => x.value === a.value);
++      else if (a.op === "off") target = steps[0];
++      else if (a.op === "on") target = curIdx > 0 ? null : steps[1] || steps[0];
++      else if (a.op === "inc" || a.op === "dec") {
++        if (curIdx < 0) throw new Error("Aktuelle Stufe noch unbekannt – gleich nochmals versuchen");
++        target = steps[Math.max(0, Math.min(steps.length - 1, curIdx + (a.op === "inc" ? 1 : -1)))];
++      }
++      if (a.op === "on" && !target) return " (läuft schon)";
++      if (!target) throw new Error("Unbekannte Stufe");
++      WsControl.setLevel(b, e, target.value);
++      return a.op === "set" ? "" : " (Stufe " + target.name + ")";
++    }
++    if (d.kind === "setpoint") {
++      const clamp = (v) => Math.max(d.min ?? -Infinity, Math.min(d.max ?? Infinity, v));
++      if (a.op === "set") {
++        const v = clamp(a.value);
++        WsControl.heatingTarget(d.zone, v);
++        return v !== a.value ? " (begrenzt auf " + v + " " + d.unit + ")" : "";
++      }
++      const hs = WsControl.getHeatingState(d.zone);
++      const cur = hs && (typeof hs.target === "number" ? hs.target : hs.value);
++      if (typeof cur !== "number") throw new Error("Aktueller Wert noch unbekannt – gleich nochmals versuchen");
++      const v = clamp(cur + (a.op === "inc" ? 1 : -1) * (a.value || 1));
++      WsControl.heatingTarget(d.zone, v);
++      return " (" + v + " " + d.unit + ")";
++    }
+     // Licht / Steckdose / Lüftung
+     if (a.op === "set") {
+       if (d.component === "ANALOG_ABSOLUTE") {
+@@ -477,13 +539,13 @@
+ 
+   {
+     const { w, h } = loadScaleSettings();
+-    nativeWidthInput.value = w;
+-    nativeHeightInput.value = h;
++    nativeWidthInput.value = w || "";
++    nativeHeightInput.value = h || "";
+   }
+ 
+   saveScaleBtn.addEventListener("click", () => {
+-    const w = parseInt(nativeWidthInput.value, 10) || DEFAULT_NATIVE_WIDTH;
+-    const h = parseInt(nativeHeightInput.value, 10) || DEFAULT_NATIVE_HEIGHT;
++    const w = parseInt(nativeWidthInput.value, 10) || 0;
++    const h = parseInt(nativeHeightInput.value, 10) || 0;
+     saveScaleSettings(w, h);
+     applyIframeScale();
+   });
+diff --git a/device-catalog.js b/device-catalog.js
+index 7eb5ea5..3a6e12d 100644
+--- a/device-catalog.js
++++ b/device-catalog.js
+@@ -9,7 +9,7 @@ const DeviceCatalog = (function () {
+   let loaded = false;
+ 
+   // Datenpunkt-Typ der Visu -> interne Geräteart
+-  function kindOf(button, element) {
++  function kindOf(button, element, roomName) {
+     const comp = element.component || "";
+     switch (button.type) {
+       case "SHUTTER":
+@@ -29,7 +29,10 @@ const DeviceCatalog = (function () {
+       case "GENERIC":
+         if (comp === "MOTOR_IN_OUT") return "marquee";
+         if (comp === "MOTOR_ARROWS") return "shutter";
+-        if (comp === "BINARY_TOGGLE") return "scene";
++        // Lichtszenen = Szenen; übrige Taster (Anwesenheitssimulation, Heiz-/Kühlbetrieb) = Schalter mit Zustand
++        if (comp === "BINARY_TOGGLE") return /szene/i.test(button.name) || /szene/i.test(roomName) ? "scene" : "switch";
++        if (comp === "ANALOG_STEPS") return /l(ü|ue|u)ftung/i.test(button.name) ? "ventilation" : "mode";
++        if (comp === "CONTROL_ABSOLUTE" && typeof element.controlId === "number") return "setpoint";
+         return null;
+       default:
+         return null; // Messwerte, Sicherheit, Kameras usw. werden nicht gesteuert
+@@ -40,9 +43,19 @@ const DeviceCatalog = (function () {
+     const list = [];
+     for (const area of config.areas || []) {
+       for (const room of area.rooms || []) {
+-        for (const button of room.buttons || []) {
++        // Buttons können direkt im Raum oder in Gruppen (z. B. "Ferien", "Heizung") liegen
++        const buttons = [...(room.buttons || [])];
++        for (const g of room.groups || []) buttons.push(...(g.buttons || []));
++        for (const button of buttons) {
++          if (button.type === "HEATING_REDUCTION") {
++            list.push({
++              id: list.length, floor: area.name, room: room.name, group: button.name, name: button.name || "Heizungsabsenkung",
++              kind: "reduction", type: button.type, component: "", button: null, element: null, zone: null, isGroup: false,
++            });
++            continue;
++          }
+           for (const element of button.elements || []) {
+-            const kind = kindOf(button, element);
++            const kind = kindOf(button, element, room.name);
+             if (!kind) continue;
+             const isGroup = area.name === "Allgemein" && (kind === "shutter" || kind === "marquee");
+             list.push({
+@@ -50,7 +63,7 @@ const DeviceCatalog = (function () {
+               floor: area.name,
+               room: room.name,
+               group: button.name,
+-              name: element.name || button.name,
++              name: element.name && !/^popup-button/i.test(element.name) ? element.name : button.name,
+               kind,
+               type: button.type,
+               component: element.component || "",
+@@ -58,6 +71,10 @@ const DeviceCatalog = (function () {
+               element: element.channel,
+               zone: typeof element.controlId === "number" ? element.controlId : null,
+               isGroup, // "Alle" / "OG" / "EG" Sammelsteuerung
++              steps: Array.isArray(element.values) ? element.values.map((v) => ({ name: String(v.name), value: v.value })) : null,
++              min: typeof element.min === "number" ? element.min : null,
++              max: typeof element.max === "number" ? element.max : null,
++              unit: element.unit || "",
+             });
+           }
+         }
+@@ -92,7 +109,10 @@ const DeviceCatalog = (function () {
+   function label(d) {
+     const dupRoom = devices.some((o) => o.room === d.room && o.floor !== d.floor);
+     const room = dupRoom ? d.room + " " + floorShort(d.floor) : d.room;
+-    return d.isGroup ? "Alle Storen/Markisen " + d.name : room + " – " + d.name;
++    if (d.isGroup) return "Alle Storen/Markisen " + d.name;
++    if (!d.name || d.name === d.room) return room;
++    if (d.kind === "reduction" || d.kind === "switch") return d.name;
++    return room + " – " + d.name;
+   }
+ 
+   function floorShort(floor) {
+diff --git a/index.html b/index.html
+index 20e0810..321d0ec 100644
+--- a/index.html
++++ b/index.html
+@@ -74,12 +74,12 @@
+       </section>
+ 
+       <section class="settings-section">
+-        <label>Skalierung der eingebetteten Visu</label>
++        <label>Darstellung der eingebetteten Visu</label>
+         <div class="settings-row">
+           <input id="nativeWidthInput" type="number" min="200" step="10" placeholder="Breite (px)">
+           <input id="nativeHeightInput" type="number" min="150" step="10" placeholder="Höhe (px)">
+         </div>
+-        <p class="settings-hint">Native Pixel-Grösse der Visu-Seite (kein responsives Layout). Werte erhöhen, wenn die Visu zu gross/abgeschnitten wirkt; verringern, wenn sie zu klein bleibt.</p>
++        <p class="settings-hint">Leer lassen = automatisch (Visu passt sich dem Fenster an, empfohlen). Optional feste Grösse, z. B. 1280 × 800 – die Visu wird dann vollständig eingepasst.</p>
+         <button id="saveScaleBtn" class="settings-btn" type="button">Übernehmen</button>
+       </section>
+ 
+diff --git a/nlu-llm.js b/nlu-llm.js
+index 0f6d886..1677e75 100644
+--- a/nlu-llm.js
++++ b/nlu-llm.js
+@@ -25,7 +25,12 @@ const LlmNLU = (function () {
+ 
+   function catalogText(devices) {
+     return devices
+-      .map((d) => [d.id, d.floor, d.room, d.kind, d.name, LocalNLU.opsFor(d.kind).join("/")].join(" | "))
++      .map((d) => {
++        let extra = "";
++        if (d.steps) extra = " | set-Werte: " + d.steps.map((s) => s.value + "=" + s.name).join(", ");
++        if (d.kind === "setpoint") extra = " | " + d.min + "–" + d.max + " " + d.unit;
++        return [d.id, d.floor, d.room, d.kind, d.name, LocalNLU.opsFor(d.kind).join("/")].join(" | ") + extra;
++      })
+       .join("\n");
+   }
+ 
+@@ -34,6 +39,7 @@ Geräteliste (id | Geschoss | Raum | Art | Name | erlaubte ops):
+ {{CATALOG}}
+ 
+ Bedeutung der ops: up=hoch/öffnen (bei Markise: einfahren), down=runter/schliessen (bei Markise: ausfahren), stop, on, off, toggle, set (value: Prozent 0-100 bei Licht, °C bei Heizung), inc/dec (value: Schritt, Heizung Standard 0.5).
++Spezielle Arten: switch = Schalter (Anwesenheitssimulation, Heiz-/Kühlbetrieb) on/off; ventilation/mode = Stufen, set mit value aus "set-Werte" (Lüftung aus = kleinster Wert), inc/dec = Stufe hoch/runter; setpoint = Sollwert (set value in der angegebenen Einheit); reduction = Heizungsabsenkung (on/off, set value = Anzahl Tage bis automatisch aus).
+ Regeln:
+ - Fehlende Angaben sinnvoll ergänzen (z. B. "Store Wohnen auf" -> up; "Wohnen 22 Grad" -> Heizung set 22).
+ - Nur ids aus der Liste verwenden. Elemente namens "Alles"/"Alle" nur, wenn ausdrücklich gemeint.
+diff --git a/nlu-local.js b/nlu-local.js
+index 3babded..efcab6b 100644
+--- a/nlu-local.js
++++ b/nlu-local.js
+@@ -60,7 +60,7 @@ const LocalNLU = (function () {
+     skylight: ["oblicht", "oberlicht", "dachfenster", "lichtkuppel"],
+     light: ["licht", "lichter", "lampe", "lampen", "leuchte", "leuchten", "beleuchtung", "dimmer", "spots", "spot", "deckenlicht"],
+     plug: ["steckdose", "steckdosen", "stecker"],
+-    heating: ["heizung", "heizen", "temperatur", "raumtemperatur", "heizventil", "grad", "warmer", "kalter", "kalt", "warm", "heiss", "kuhl"],
++    heating: ["heizung", "heizen", "temperatur", "raumtemperatur", "heizventil", "grad", "warmer", "kalter", "kuhler", "kalt", "warm", "heiss", "kuhl"],
+     fan: ["luftung", "ventilator", "abluft"],
+     scene: ["szene", "lichtszene", "stimmung"],
+   };
+@@ -69,11 +69,11 @@ const LocalNLU = (function () {
+     up: ["auf", "hoch", "rauf", "offnen", "offne", "offnet", "aufmachen", "hochfahren", "hochziehen", "auffahren", "offen", "einfahren", "rein", "zuruckfahren"],
+     down: ["zu", "runter", "herunter", "ab", "schliessen", "schliesse", "zumachen", "runterfahren", "herunterfahren", "abfahren", "ablassen", "geschlossen", "ausfahren", "raus"],
+     stop: ["stopp", "stop", "halt", "anhalten", "stoppen"],
+-    on: ["an", "ein", "einschalten", "anschalten", "anmachen", "anzunden", "hell"],
+-    off: ["aus", "ausschalten", "ausmachen", "abschalten", "dunkel"],
++    on: ["an", "ein", "einschalten", "anschalten", "anmachen", "anzunden", "hell", "aktivieren", "aktiviere", "aktiv", "starten", "starte", "start"],
++    off: ["aus", "ausschalten", "ausmachen", "abschalten", "dunkel", "deaktivieren", "deaktiviere", "beenden", "beende"],
+     toggle: ["umschalten", "toggle", "wechseln"],
+     inc: ["heller", "warmer", "hoher", "mehr", "erhohen", "aufdrehen"],
+-    dec: ["dunkler", "kalter", "tiefer", "weniger", "senken", "reduzieren", "runterdrehen", "zudrehen"],
++    dec: ["dunkler", "kalter", "kuhler", "tiefer", "weniger", "senken", "reduzieren", "runterdrehen", "zudrehen"],
+   };
+ 
+   const ALL_WORDS = ["alle", "allen", "alles", "samtliche", "ganze", "ganzen", "uberall", "komplett"];
+@@ -85,7 +85,7 @@ const LocalNLU = (function () {
+   };
+ 
+   // Steuerwörter nie als Raum- oder Gerätename interpretieren ("heller" ≠ "Keller")
+-  const VOCAB = new Set([...Object.values(KIND_WORDS).flat(), ...Object.values(OP_WORDS).flat(), ...ALL_WORDS, "kalt", "warm", "heiss", "kuhl", "zu", "im", "in", "der", "die", "das", "den", "dem", "bitte", "mach", "mache"]);
++  const VOCAB = new Set([...Object.values(KIND_WORDS).flat(), ...Object.values(OP_WORDS).flat(), ...ALL_WORDS, "kalt", "warm", "heiss", "kuhl", "stufe", "stufen", "zu", "im", "in", "der", "die", "das", "den", "dem", "bitte", "mach", "mache"]);
+ 
+   function contentToks(toks) {
+     return toks.filter((t) => !VOCAB.has(t));
+@@ -259,7 +259,12 @@ const LocalNLU = (function () {
+       fan: ["on", "off", "toggle"],
+       scene: ["on", "toggle"],
+       heating: ["set", "inc", "dec"],
+-    }[kind];
++      switch: ["on", "off", "toggle"],
++      ventilation: ["set", "on", "off", "inc", "dec"],
++      mode: ["set"],
++      setpoint: ["set", "inc", "dec"],
++      reduction: ["on", "off", "set"],
++    }[kind] || [];
+   }
+ 
+   // Aktion aus Verb/Wert und Geräteart ableiten (fehlende Angaben ergänzen)
+@@ -320,6 +325,11 @@ const LocalNLU = (function () {
+     fan: "Lüftung",
+     scene: "Szene",
+     heating: "Heizung",
++    switch: "Schalter",
++    ventilation: "Lüftung",
++    mode: "Modus",
++    setpoint: "Sollwert",
++    reduction: "Heizungsabsenkung",
+   };
+ 
+   const OP_LABEL = {
+@@ -340,16 +350,164 @@ const LocalNLU = (function () {
+     if (d && d.kind === "marquee") what = { up: "einfahren", down: "ausfahren", stop: "stoppen" }[action.op] || what;
+     if (action.op === "set") what = d && d.kind === "heating" ? "auf " + action.value + " °C" : "auf " + action.value + " %";
+     if ((action.op === "inc" || action.op === "dec") && d && d.kind === "heating") what = (action.op === "inc" ? "+" : "−") + action.value + " °C";
++    if (d && (d.kind === "ventilation" || d.kind === "mode")) {
++      const st = (d.steps || []).find((x) => x.value === action.value);
++      if (action.op === "set") what = d.kind === "ventilation" ? "Stufe " + (st ? st.name : action.value) : (st ? st.name : action.value);
++      if (action.op === "inc") what = "Stufe höher";
++      if (action.op === "dec") what = "Stufe tiefer";
++    }
++    if (d && d.kind === "setpoint") {
++      if (action.op === "set") what = "auf " + action.value + " " + (d.unit || "");
++      else what = (action.op === "inc" ? "+" : "−") + (action.value || 1) + " " + (d.unit || "");
++    }
++    if (d && d.kind === "reduction") {
++      what = action.op === "off" ? "aus" : "ein" + (action.value ? " (automatisch aus nach " + action.value + " Tag" + (action.value > 1 ? "en" : "") + ")" : "");
++    }
+     return (d ? DeviceCatalog.label(d) : "?") + ": " + what;
+   }
+ 
+-  function parse(text, devices) {
++  // --- Zentrale Funktionen (Allgemein): Absenkung, Simulation, Heiz-/Kühlbetrieb, Lüftung, Sauna ---
++
++  const SPECIAL_KINDS = new Set(["switch", "ventilation", "mode", "setpoint", "reduction"]);
++
++  const W = {
++    reduction: ["absenkung", "heizungsabsenkung", "ferienmodus", "ferien", "urlaub", "urlaubsmodus", "abwesend"],
++    simulation: ["simulation", "anwesenheitssimulation"],
++    heatMode: ["heizbetrieb", "heizmodus"],
++    coolMode: ["kuhlbetrieb", "kuhlmodus", "kuhlung"],
++    ventilation: ["luftung", "luften", "ventilation", "luftungsstufe", "komfortluftung"],
++    sauna: ["sauna"],
++    sanarium: ["sanarium"],
++    humidity: ["feuchte", "feuchtigkeit", "luftfeuchte"],
++    bathTime: ["badezeit", "dauer", "minuten"],
++  };
++  const MORE = ["hoher", "mehr", "starker", "erhohen", "schneller", "plus", "hoch", "rauf"];
++  const LESS = ["tiefer", "weniger", "schwacher", "reduzieren", "langsamer", "minus", "runter", "senken"];
++  const MAX = ["maximal", "maximum", "max", "voll", "volle", "hochste", "starkste"];
++  const ROMAN = { "0": 0, i: 1, ii: 2, iii: 3, iv: 4, "1": 1, "2": 2, "3": 3, "4": 4 };
++
++  function findDays(text, toks) {
++    const i = toks.findIndex((t) => /^tag(e|en)?$/.test(t) || t === "woche" || t === "wochen");
++    if (i < 1) return null;
++    const prev = toks[i - 1];
++    let n = /^\d+$/.test(prev) ? parseInt(prev, 10) : parseNumberWord(prev);
++    if (n === null && (prev === "ein" || prev === "einen" || prev === "eine")) n = 1;
++    if (n === null) return null;
++    return toks[i].startsWith("woche") ? n * 7 : n;
++  }
++
++  function stepByLevel(d, level) {
++    const steps = d.steps || [];
++    return steps.find((s) => ROMAN[fold(s.name)] === level) || steps[level] || null;
++  }
++
++  function stepFromText(d, toks, value) {
++    const steps = d.steps || [];
++    // Stufenname direkt genannt ("Sanarium", "Stufe II")
++    const byName = steps.find((s) => fold(s.name).length > 2 && toks.some((t) => near(t, fold(s.name))));
++    if (byName) return byName;
++    const roman = toks.find((t) => ["i", "ii", "iii", "iv"].includes(t));
++    if (roman) return stepByLevel(d, ROMAN[roman]);
++    if (value !== null) return stepByLevel(d, Math.round(value));
++    return null;
++  }
++
++  function parseSpecial(text, toks, devices, value, unit, op) {
++    const has = (words) => hasAny(toks, words, true);
++    const find = (pred) => devices.find(pred) || null;
++    const onOff = () => (op === "off" || op === "stop" || op === "down" ? "off" : op === "on" || op === "up" ? "on" : null);
++
++    // Heizungsabsenkung (Ferien)
++    if (has(W.reduction) && !has(W.simulation)) {
++      const d = find((x) => x.kind === "reduction");
++      if (d) {
++        const days = findDays(text, toks);
++        let o = onOff();
++        if (!o && days) o = "on";
++        if (!o) return clarify("Heizungsabsenkung:", [
++          { label: "Einschalten", actions: [{ deviceId: d.id, op: "on" }] },
++          { label: "Ausschalten", actions: [{ deviceId: d.id, op: "off" }] },
++        ], devices);
++        return ok([{ deviceId: d.id, op: o, value: o === "on" && days ? days : undefined }], devices);
++      }
++    }
++
++    // Anwesenheitssimulation, Heiz-/Kühlbetrieb (Schalter mit Zustand)
++    const switchTargets = [
++      [W.simulation, /simulation/i, "Anwesenheitssimulation"],
++      [W.heatMode, /heizbetrieb/i, "Heizbetrieb"],
++      [W.coolMode, /k(ü|ue)hlbetrieb/i, "Kühlbetrieb"],
++    ];
++    for (const [words, re, label] of switchTargets) {
++      if (!has(words)) continue;
++      const d = find((x) => x.kind === "switch" && (re.test(x.name) || re.test(x.group)));
++      if (!d) continue;
++      const o = onOff() || (op === "toggle" ? "toggle" : null);
++      if (!o) return clarify(label + ":", [
++        { label: "Einschalten", actions: [{ deviceId: d.id, op: "on" }] },
++        { label: "Ausschalten", actions: [{ deviceId: d.id, op: "off" }] },
++      ], devices);
++      return ok([{ deviceId: d.id, op: o }], devices);
++    }
++
++    // Sauna / Sanarium
++    if (has(W.sauna) || has(W.sanarium)) {
++      const mode = find((x) => x.kind === "mode" && /sauna/i.test(x.group));
++      const sp = (re) => find((x) => x.kind === "setpoint" && /sauna/i.test(x.group) && re.test(x.name));
++      if (value !== null && unit !== "percent" && !has(W.humidity) && !has(W.bathTime)) {
++        const d = has(W.sanarium) ? sp(/sanarium/i) : sp(/^sauna$/i);
++        if (d) return ok([{ deviceId: d.id, op: "set", value }], devices);
++      }
++      if (value !== null && has(W.humidity)) {
++        const d = sp(/feuchte/i);
++        if (d) return ok([{ deviceId: d.id, op: "set", value }], devices);
++      }
++      if (value !== null && has(W.bathTime)) {
++        const d = sp(/badezeit/i);
++        if (d) return ok([{ deviceId: d.id, op: "set", value }], devices);
++      }
++      if (mode) {
++        const o = onOff();
++        let st = null;
++        if (o === "off") st = (mode.steps || []).find((s) => /aus/i.test(s.name)) || (mode.steps || [])[0];
++        else if (has(W.sanarium)) st = (mode.steps || []).find((s) => /sanarium/i.test(s.name));
++        else if (o === "on") st = (mode.steps || []).find((s) => /^sauna$/i.test(s.name));
++        if (st) return ok([{ deviceId: mode.id, op: "set", value: st.value }], devices);
++        return clarify("Sauna:", (mode.steps || []).map((s) => ({ label: s.name, actions: [{ deviceId: mode.id, op: "set", value: s.value }] })), devices);
++      }
++    }
++
++    // Lüftung (zentrale Stufen-Lüftung). "Lüftung Vorrat" etc. läuft über die normale Raumlogik.
++    const roomNamed = detectRooms(fold(text), toks, devices.filter((x) => !SPECIAL_KINDS.has(x.kind))).length > 0;
++    if (has(W.ventilation) && !roomNamed) {
++      const d = find((x) => x.kind === "ventilation");
++      if (d) {
++        const steps = d.steps || [];
++        if (hasAny(toks, MAX, true) && steps.length) return ok([{ deviceId: d.id, op: "set", value: steps[steps.length - 1].value }], devices);
++        const st = stepFromText(d, toks, unit === "degree" ? null : value);
++        if (st) return ok([{ deviceId: d.id, op: "set", value: st.value }], devices);
++        if (op === "inc" || hasAny(toks, MORE, false)) return ok([{ deviceId: d.id, op: "inc" }], devices);
++        if (op === "dec" || hasAny(toks, LESS, false)) return ok([{ deviceId: d.id, op: "dec" }], devices);
++        if (op === "off") return ok([{ deviceId: d.id, op: "off" }], devices);
++        if (op === "on") return ok([{ deviceId: d.id, op: "on" }], devices);
++        return clarify("Lüftung: welche Stufe?", steps.map((s) => ({ label: "Stufe " + s.name, actions: [{ deviceId: d.id, op: "set", value: s.value }] })), devices);
++      }
++    }
++    return null;
++  }
++
++  function parse(text, allDevices) {
+     const normText = fold(text);
+     const toks = tokens(text);
+     if (!toks.length) return { status: "unknown", reason: "Kein Text." };
+ 
+     const { value, unit } = findValue(text, toks);
+     let op = detectOp(toks);
++
++    const special = parseSpecial(text, toks, allDevices, value, unit, op);
++    if (special) return special;
++    // Ab hier nur noch die raumbezogenen Geräte (Licht, Storen, Heizung, …)
++    const devices = allDevices.filter((d) => !SPECIAL_KINDS.has(d.kind));
+     // "es ist zu kalt" -> wärmer, "zu warm" -> kälter
+     const zi = toks.indexOf("zu");
+     if (zi >= 0 && ["kalt", "kuhl"].includes(toks[zi + 1])) op = "inc";
+@@ -361,7 +519,11 @@ const LocalNLU = (function () {
+ 
+     // Szenen direkt über ihren Namen ("Heimkommen", "Alles aus")
+     const scenes = devices.filter((d) => d.kind === "scene");
+-    const sceneHit = matchByName(scenes, toks.filter((t) => !ALL_WORDS.includes(t) || toks.length <= 2), new Set());
++    const sceneToks = toks.filter((t) => !ALL_WORDS.includes(t) || toks.length <= 2 || t === "alles");
++    let sceneHit = matchByName(scenes, sceneToks, new Set());
++    // Nur "aus"/"an" alleine reicht nicht für eine Szene ("Alles Aus" braucht "alles")
++    const OPS_FLAT = new Set(Object.values(OP_WORDS).flat());
++    if (sceneHit) sceneHit = sceneHit.filter((d) => nameWords(d).some((w) => !OPS_FLAT.has(w) && sceneToks.some((t) => near(t, w))));
+     if (sceneHit && sceneHit.length === 1 && !rooms.length && (!kinds.length || kinds.includes("scene"))) {
+       return ok([{ deviceId: sceneHit[0].id, op: "on" }], devices);
+     }
+diff --git a/ws-control.js b/ws-control.js
+index 7a5107c..ffc3167 100644
+--- a/ws-control.js
++++ b/ws-control.js
+@@ -14,6 +14,7 @@ const WsControl = (function () {
+ 
+   const scState = new Map(); // `${button}_${element}` -> letztes FEEDBACK
+   const heatingState = new Map(); // zone -> letztes FEEDBACK
++  let reductionState = null; // {number: 1|2, days} – 2 = Absenkung aktiv
+ 
+   function setStatus(status, detail) {
+     if (statusCallback) statusCallback(status, detail);
+@@ -58,6 +59,8 @@ const WsControl = (function () {
+       } else if (msg.type === "HEATING" && "zone" in d) {
+         heatingState.set(d.zone, d);
+       }
++    } else if (msg.kind === "ACTION" && msg.type === "HEATING" && msg.action === "REDUCTION") {
++      reductionState = { ...(reductionState || {}), ...(msg.data || {}) };
+     }
+   }
+ 
+@@ -185,6 +188,13 @@ const WsControl = (function () {
+   function heatingTarget(zone, target) {
+     send("HEATING", "TARGET", { zone, target });
+   }
++  // Heizungsabsenkung (Ferien): value 2 = ein, 1 = aus; days > 0 = automatisch nach n Tagen deaktivieren
++  function heatingReduction(active, days) {
++    send("HEATING", "REDUCTION", { value: active ? 2 : 1, days: active ? Math.max(0, Math.round(days || 0)) : 0 });
++  }
++  function getReductionState() {
++    return reductionState;
++  }
+   function getHeatingState(zone) {
+     return heatingState.get(zone) || null;
+   }
+@@ -213,6 +223,8 @@ const WsControl = (function () {
+     heatingRegister,
+     heatingUnregister,
+     heatingTarget,
++    heatingReduction,
++    getReductionState,
+     getHeatingState,
+     getScState,
+   };
+-- 
+2.43.0
+

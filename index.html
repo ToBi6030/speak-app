@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Sprachsteuerung</title>
+  <link rel="stylesheet" href="style.css?v=6">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="top-bar">
+      <span class="top-bar-title">Smart Home</span>
+      <span class="conn-indicator">
+        <span id="connDot" class="conn-dot disconnected"></span>
+        <span id="connText">nicht verbunden</span>
+      </span>
+      <a class="top-bar-link" href="https://vsc1.spline.ch/designs/design/" target="_blank" rel="noopener">Seite in neuem Tab öffnen</a>
+      <button id="settingsBtn" class="top-bar-btn" type="button">Einstellungen</button>
+    </header>
+
+    <div id="visuWrapper" class="visu-wrapper">
+      <iframe id="visuFrame" class="visu-frame" src="https://vsc1.spline.ch/designs/design/" title="Smart-Control Visualisierung"></iframe>
+    </div>
+
+    <div id="feedbackBox" class="feedback-box" hidden>
+      <p id="feedbackText" class="feedback-text"></p>
+      <pre id="feedbackCommand" class="feedback-command"></pre>
+      <p id="feedbackStatus" class="feedback-status"></p>
+      <div id="clarifyBox" class="clarify-box" hidden>
+        <p id="clarifyQuestion" class="clarify-question"></p>
+        <div id="clarifyOptions" class="clarify-options"></div>
+      </div>
+    </div>
+
+    <button id="recordBtn" class="record-btn" type="button" aria-pressed="false" title="Sprachbefehl (gedrückt halten)">
+      <svg class="mic-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" fill="currentColor"/>
+        <path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+    </button>
+
+    <p id="unsupported" class="unsupported" hidden>
+      Dein Browser unterstützt keine Spracherkennung (Web Speech API). Bitte verwende z. B. Chrome.
+    </p>
+  </div>
+
+  <div id="settingsPanel" class="settings-panel" hidden>
+    <div class="settings-content">
+      <div class="settings-header">
+        <h2>Einstellungen</h2>
+        <button id="closeSettingsBtn" class="close-btn" type="button" aria-label="Schliessen">✕</button>
+      </div>
+
+      <section class="settings-section">
+        <label for="wsUrlInput">WebSocket-URL</label>
+        <input id="wsUrlInput" type="text" placeholder="wss://vsc1.spline.ch/">
+        <div class="settings-row">
+          <button id="connectBtn" class="settings-btn" type="button">Verbinden</button>
+          <button id="disconnectBtn" class="settings-btn" type="button">Trennen</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <label for="llmKeyInput">KI-Fallback (Claude API)</label>
+        <input id="llmKeyInput" type="password" autocomplete="off" placeholder="API-Key (sk-ant-…) – leer = aus">
+        <div class="settings-row">
+          <input id="llmModelInput" type="text" placeholder="Modell">
+          <button id="saveLlmBtn" class="settings-btn" type="button">Speichern</button>
+        </div>
+        <p class="settings-hint">Wird nur genutzt, wenn die lokale Erkennung nichts findet. Der Key bleibt nur in diesem Browser (localStorage); jede KI-Anfrage kostet Tokens auf deinem Anthropic-Konto.</p>
+        <span id="llmSaved" class="settings-saved" hidden>Gespeichert.</span>
+        <p id="catalogInfo" class="settings-hint"></p>
+      </section>
+
+      <section class="settings-section">
+        <label>Darstellung der eingebetteten Visu</label>
+        <div class="settings-row">
+          <input id="nativeWidthInput" type="number" min="200" step="10" placeholder="Breite (px)">
+          <input id="nativeHeightInput" type="number" min="150" step="10" placeholder="Höhe (px)">
+        </div>
+        <p class="settings-hint">Leer lassen = automatisch (Visu passt sich dem Fenster an, empfohlen). Optional feste Grösse, z. B. 1280 × 800 – die Visu wird dann vollständig eingepasst.</p>
+        <button id="saveScaleBtn" class="settings-btn" type="button">Übernehmen</button>
+      </section>
+
+      <section class="settings-section">
+        <label for="mappingInput">Adress-Zuordnung (JSON)</label>
+        <textarea id="mappingInput" class="mapping-textarea" spellcheck="false"></textarea>
+        <p class="settings-hint">
+          Storen/Markisen/Vorhang: <code>"Raum|shutter": {"button":63,"element":1}</code><br>
+          Licht/Steckdose: <code>"Raum|light": {"button":39,"element":1,"component":"TOGGLE"}</code> (component: TOGGLE | ON_OFF)<br>
+          Heizung: <code>"Raum|heating": {"zone":5}</code><br>
+          Werte per DevTools (Netzwerk → WS) beim Bedienen des echten Elements ablesen.
+        </p>
+        <button id="saveMappingBtn" class="settings-btn" type="button">Zuordnung speichern</button>
+        <span id="mappingSaved" class="settings-saved" hidden>Gespeichert.</span>
+      </section>
+    </div>
+  </div>
+
+  <script src="rooms-data.js?v=6"></script>
+  <script src="command-parser.js?v=6"></script>
+  <script src="mapping-store.js?v=6"></script>
+  <script src="device-catalog.js?v=6"></script>
+  <script src="nlu-local.js?v=6"></script>
+  <script src="nlu-llm.js?v=6"></script>
+  <script src="ws-control.js?v=6"></script>
+  <script src="app.js?v=6"></script>
+</body>
+</html>

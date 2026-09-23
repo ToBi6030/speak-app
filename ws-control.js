@@ -1,0 +1,303 @@
+// JS-Port von spline_client.py – Steuerung der Smart-Control-Anlage über den
+// öffentlichen WebSocket von vsc1.spline.ch (kein Token/Cookie nötig).
+//
+// Transport : wss://<host>/  Textnachrichten
+// Senden    : "ACTION;<base64(JSON)>;"  JSON = {"type":..., "action":..., "data":{...}}
+// Keepalive : Server schickt "PING;..." -> Client antwortet "PONG;"
+// Adressierung: button = Button-*channel*, element = Element-*channel* (nicht id!)
+
+const WsControl = (function () {
+  let socket = null;
+  let statusCallback = null;
+  let reconnectTimer = null;
+  let intentionallyClosed = false;
+
+  const scState = new Map(); // `${button}_${element}` -> letztes FEEDBACK
+  const heatingState = new Map(); // zone -> letztes FEEDBACK
+  let reductionState = null; // {number: 1|2, days} – 2 = Absenkung aktiv
+  const avState = new Map(); // AV_DEVICE key -> letzter Zustand ({command: "playing"|"paused"|…})
+  let securityScenes = []; // [{number, name, status}]
+  let securityStatus = null; // "activated" | "deactivated" | …
+  let pendingSecurity = null; // {number, cb, timer}
+
+  function setStatus(status, detail) {
+    if (statusCallback) statusCallback(status, detail);
+  }
+
+  function base64EncodeUtf8(str) {
+    return btoa(unescape(encodeURIComponent(str)));
+  }
+
+  function base64DecodeUtf8(str) {
+    // TextDecoder ist tolerant gegenüber ungültigen UTF-8-Bytes (z. B. in SECURITY/INIT)
+    const bytes = Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
+  function encodeAction(type, action, data) {
+    const raw = JSON.stringify({ type, action, data });
+    return "ACTION;" + base64EncodeUtf8(raw) + ";";
+  }
+
+  function decodeMessage(msg) {
+    const parts = msg.split(";");
+    const kind = parts[0];
+    if (kind === "ACTION" && parts.length > 1) {
+      try {
+        return { kind: "ACTION", ...JSON.parse(base64DecodeUtf8(parts[1])) };
+      } catch (err) {
+        return { kind: "ACTION", raw: msg };
+      }
+    }
+    return { kind, raw: msg };
+  }
+
+  function handleIncoming(raw) {
+    if (raw.startsWith("PING")) {
+      socket.send("PONG;");
+      return;
+    }
+    const msg = decodeMessage(raw);
+    if (msg.kind === "ACTION" && msg.action === "FEEDBACK") {
+      const d = msg.data || {};
+      if (msg.type === "SMARTCONTROL" && "button" in d) {
+        scState.set(d.button + "_" + (d.element || 0), d);
+      } else if (msg.type === "HEATING" && "zone" in d) {
+        heatingState.set(d.zone, d);
+      }
+    } else if (msg.kind === "ACTION" && msg.type === "HEATING" && msg.action === "REDUCTION") {
+      reductionState = { ...(reductionState || {}), ...(msg.data || {}) };
+    } else if (msg.kind === "ACTION" && msg.type === "AV_DEVICE") {
+      const d = msg.data || {};
+      if (d.key) avState.set(d.key, { ...(avState.get(d.key) || {}), ...d });
+    } else if (msg.kind === "ACTION" && msg.type === "SECURITY") {
+      handleSecurity(msg.action, msg.data || {});
+    }
+  }
+
+  // --- Sicherheitsanlage ---
+  // Ablauf wie in der Visu: CHECK_SCENE -> Server antwortet SCENE {number, set}
+  // -> bei set != "impossible" wird SET_SCENE gesendet, sonst sind Sensoren offen.
+  function handleSecurity(action, d) {
+    if (Array.isArray(d.scenes)) securityScenes = d.scenes.map((s) => ({ ...s }));
+    if (d.state && d.state.status) securityStatus = d.state.status;
+    if (action === "STATE" && d.status) securityStatus = d.status;
+    if (action === "SCENE" && typeof d.number === "number") {
+      const i = securityScenes.findIndex((s) => s.number === d.number);
+      if (i >= 0) securityScenes[i] = { ...securityScenes[i], ...d };
+      if (pendingSecurity && pendingSecurity.number === d.number && "set" in d) {
+        const p = pendingSecurity;
+        pendingSecurity = null;
+        clearTimeout(p.timer);
+        if (d.set === "impossible") {
+          const open = (d.sensors || d.openSensors || []).length;
+          p.cb(false, "nicht möglich" + (open ? " – " + open + " Sensor(en) offen" : " – Fenster/Türen offen?"));
+        } else {
+          send("SECURITY", "SET_SCENE", { number: d.number });
+          p.cb(true, "");
+        }
+      }
+    }
+  }
+
+  function securityScene(number, cb) {
+    if (pendingSecurity) clearTimeout(pendingSecurity.timer);
+    const done = cb || function () {};
+    pendingSecurity = {
+      number,
+      cb: done,
+      timer: setTimeout(() => {
+        if (pendingSecurity && pendingSecurity.number === number) {
+          pendingSecurity = null;
+          done(false, "keine Antwort der Anlage");
+        }
+      }, 5000),
+    };
+    send("SECURITY", "CHECK_SCENE", { number });
+  }
+
+  function getSecurityScenes() {
+    return securityScenes;
+  }
+  function getSecurityStatus() {
+    return securityStatus;
+  }
+
+  // --- Musik (AV-Geräte) --- command: play | pause | play_pause | stop | next | previous
+  function avCommand(key, command) {
+    send("AV_DEVICE", "COMMAND", { key, command });
+  }
+  function getAvState(key) {
+    return avState.get(key) || null;
+  }
+
+  function connect(url, onStatusChange) {
+    statusCallback = onStatusChange || statusCallback;
+    intentionallyClosed = false;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (socket) {
+      try {
+        socket.close();
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    setStatus("connecting");
+    try {
+      socket = new WebSocket(url);
+    } catch (err) {
+      setStatus("error", err.message);
+      return;
+    }
+
+    socket.addEventListener("open", () => setStatus("connected"));
+
+    socket.addEventListener("message", (event) => {
+      const data = typeof event.data === "string" ? event.data : "";
+      handleIncoming(data);
+    });
+
+    socket.addEventListener("close", () => {
+      setStatus("disconnected");
+      socket = null;
+      if (!intentionallyClosed) {
+        reconnectTimer = setTimeout(() => connect(url, statusCallback), 5000);
+      }
+    });
+
+    socket.addEventListener("error", () => setStatus("error"));
+  }
+
+  function disconnect() {
+    intentionallyClosed = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (socket) {
+      socket.close();
+      socket = null;
+    }
+    setStatus("disconnected");
+  }
+
+  function isConnected() {
+    return Boolean(socket && socket.readyState === WebSocket.OPEN);
+  }
+
+  function send(type, action, data) {
+    if (!isConnected()) throw new Error("Keine WebSocket-Verbindung");
+    socket.send(encodeAction(type, action, data));
+  }
+
+  function sc(action, button, element, extra) {
+    send("SMARTCONTROL", action, { button, element, ...(extra || {}) });
+  }
+
+  function register(button) {
+    send("SMARTCONTROL", "REGISTER", { button });
+  }
+
+  function unregister(button) {
+    send("SMARTCONTROL", "UNREGISTER", { button, push: false });
+  }
+
+  // BINARY_TOGGLE / ANALOG_ABSOLUTE / Szenen: ein Tastendruck = PUSH + RELEASE
+  function toggle(button, element) {
+    sc("PUSH", button, element);
+    sc("RELEASE", button, element);
+  }
+
+  // BINARY_ON_OFF
+  function on(button, element) {
+    sc("PUSH", button, element);
+  }
+  function off(button, element) {
+    sc("RELEASE", button, element);
+  }
+
+  // ANALOG_ABSOLUTE (Dimmer) 0..100, ANALOG_STEPS: value aus values[]
+  function setLevel(button, element, value) {
+    sc("VALUE", button, element, { value: Math.round(value) });
+  }
+
+  // Storen / Markisen / Oberlicht
+  function top(button, element) {
+    sc("TOP", button, element);
+  } // ganz auf / einfahren / öffnen
+  function bottom(button, element) {
+    sc("BOTTOM", button, element);
+  } // ganz zu / ausfahren / schliessen
+  function up(button, element) {
+    sc("UP", button, element);
+  }
+  function down(button, element) {
+    sc("DOWN", button, element);
+  }
+  function stop(button, element) {
+    sc("STOP", button, element);
+  }
+  function preset(button, element, number) {
+    sc("PRESET", button, element, { number });
+  }
+
+  // Heizung
+  function heatingRegister(zone) {
+    send("HEATING", "REGISTER", { zone });
+  }
+  function heatingUnregister(zone) {
+    send("HEATING", "UNREGISTER", { zone });
+  }
+  function heatingTarget(zone, target) {
+    send("HEATING", "TARGET", { zone, target });
+  }
+  // Heizungsabsenkung (Ferien): value 2 = ein, 1 = aus; days > 0 = automatisch nach n Tagen deaktivieren
+  function heatingReduction(active, days) {
+    send("HEATING", "REDUCTION", { value: active ? 2 : 1, days: active ? Math.max(0, Math.round(days || 0)) : 0 });
+  }
+  function getReductionState() {
+    return reductionState;
+  }
+  function getHeatingState(zone) {
+    return heatingState.get(zone) || null;
+  }
+  function getScState(button, element) {
+    return scState.get(button + "_" + element) || null;
+  }
+
+  return {
+    connect,
+    disconnect,
+    isConnected,
+    send,
+    sc,
+    register,
+    unregister,
+    toggle,
+    on,
+    off,
+    setLevel,
+    top,
+    bottom,
+    up,
+    down,
+    stop,
+    preset,
+    heatingRegister,
+    heatingUnregister,
+    heatingTarget,
+    heatingReduction,
+    getReductionState,
+    getHeatingState,
+    getScState,
+    securityScene,
+    getSecurityScenes,
+    getSecurityStatus,
+    avCommand,
+    getAvState,
+  };
+})();
