@@ -22,11 +22,19 @@
       <button id="copyBtn" class="copy-btn" type="button" title="Text kopieren">Kopieren</button>
     </div>
 
+    <div class="command-box">
+      <p class="command-label">Erkannter Befehl</p>
+      <pre id="commandOutput" class="command-output">–</pre>
+      <button id="copyCommandBtn" class="copy-btn" type="button" title="Befehl als JSON kopieren">Befehl kopieren</button>
+    </div>
+
     <p id="unsupported" class="unsupported" hidden>
       Dein Browser unterstützt keine Spracherkennung (Web Speech API). Bitte verwende z. B. Chrome.
     </p>
   </main>
 
+  <script src="rooms-data.js"></script>
+  <script src="command-parser.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

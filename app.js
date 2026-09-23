@@ -4,6 +4,8 @@
   const resultInput = document.getElementById("resultText");
   const copyBtn = document.getElementById("copyBtn");
   const unsupportedEl = document.getElementById("unsupported");
+  const commandOutput = document.getElementById("commandOutput");
+  const copyCommandBtn = document.getElementById("copyCommandBtn");
 
   const SpeechRecognition =
     window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -31,11 +33,23 @@
     statusEl.textContent = recording ? "Höre zu ..." : "Bereit";
   }
 
+  function updateCommandOutput(text) {
+    if (typeof parseCommand !== "function" || !text.trim()) {
+      commandOutput.textContent = "–";
+      commandOutput.classList.remove("no-match");
+      return;
+    }
+    const command = parseCommand(text);
+    commandOutput.textContent = JSON.stringify(command, null, 2);
+    commandOutput.classList.toggle("no-match", !command.matched);
+  }
+
   function startRecording() {
     if (isRecording) return;
     stopRequested = false;
     finalText = "";
     resultInput.value = "";
+    updateCommandOutput("");
     try {
       recognition.start();
     } catch (err) {
@@ -64,6 +78,7 @@
       }
     }
     resultInput.value = (finalText + " " + interim).trim();
+    updateCommandOutput(resultInput.value);
   };
 
   recognition.onerror = function (event) {
@@ -115,6 +130,27 @@
     setTimeout(() => {
       copyBtn.textContent = "Kopieren";
       copyBtn.classList.remove("copied");
+    }, 1500);
+  });
+
+  copyCommandBtn.addEventListener("click", async () => {
+    const text = commandOutput.textContent;
+    if (!text || text === "–") return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      const range = document.createRange();
+      range.selectNode(commandOutput);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+      document.execCommand("copy");
+      window.getSelection().removeAllRanges();
+    }
+    copyCommandBtn.textContent = "Kopiert!";
+    copyCommandBtn.classList.add("copied");
+    setTimeout(() => {
+      copyCommandBtn.textContent = "Befehl kopieren";
+      copyCommandBtn.classList.remove("copied");
     }, 1500);
   });
 })();
