@@ -1,4 +1,4 @@
-// Sehr einfache, regelbasierte Erkennung von Smart-Home-Befehlen aus freiem Text.
+// Regelbasierte Erkennung von Smart-Home-Befehlen aus freiem Text.
 // Erwartet ROOMS und ROOM_ALIASES aus rooms-data.js im globalen Scope.
 
 const CATEGORY_KEYWORDS = {
@@ -10,20 +10,22 @@ const CATEGORY_KEYWORDS = {
   plug: ["steckdose", "stecker"],
 };
 
+// Aktionen: top/bottom = ganz auf/zu (bzw. einfahren/ausfahren bei Markisen), stop = anhalten.
 const ACTION_WORDS = {
   shutter: {
-    up: ["auffahren", "auf", "hoch", "rauf", "öffnen", "offen"],
-    down: ["runterfahren", "abfahren", "zu", "runter", "schliessen", "schließen", "geschlossen"],
+    top: ["auffahren", "auf", "hoch", "rauf", "öffnen", "offen"],
+    bottom: ["runterfahren", "abfahren", "zu", "runter", "schliessen", "schließen", "geschlossen"],
     stop: ["stopp", "stop", "halt"],
   },
   marquee: {
-    down: ["ausfahren", "raus"], // Markise ausfahren = Beschattung aktiv
-    up: ["einfahren", "rein"],
+    top: ["einfahren", "rein"], // Markise einfahren
+    bottom: ["ausfahren", "raus"], // Markise ausfahren
     stop: ["stopp", "stop", "halt"],
   },
   curtain: {
-    up: ["auf", "öffnen", "offen"],
-    down: ["zu", "schliessen", "schließen", "geschlossen"],
+    top: ["auf", "öffnen", "offen"],
+    bottom: ["zu", "schliessen", "schließen", "geschlossen"],
+    stop: ["stopp", "stop", "halt"],
   },
   light: {
     on: ["an", "ein", "einschalten"],
@@ -34,8 +36,8 @@ const ACTION_WORDS = {
     off: ["aus", "ausschalten"],
   },
   heating: {
-    up: ["wärmer", "höher", "rauf", "hoch"],
-    down: ["kälter", "tiefer", "runter"],
+    up: ["wärmer", "höher"],
+    down: ["kälter", "tiefer"],
   },
 };
 
@@ -83,13 +85,14 @@ function findAction(normText, category) {
   return null;
 }
 
+// Erkennt "<Zahl> Grad" (Heizung) oder "<Zahl> Prozent" (Dimmer).
 function findTargetValue(normText) {
   const match = normText.match(/(\d{1,3})\s*(grad|prozent)?/);
   if (!match) return null;
   return { value: parseInt(match[1], 10), unit: match[2] || null };
 }
 
-// Ergebnis: { room, floor, category, action, value, raw } oder null-Felder wenn nicht erkannt.
+// Ergebnis: { room, floor, category, action, value, unit, matched }
 function parseCommand(text) {
   const normText = normalize(text);
   const roomKey = findRoom(normText);

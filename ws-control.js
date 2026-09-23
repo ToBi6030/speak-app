@@ -1,9 +1,10 @@
-// Verbindung zum Smart-Control-WebSocket (vsc1.spline.ch).
-// Protokoll (per DevTools-Mitschnitt ermittelt):
-//   Client -> Server: "ACTION;<Base64(JSON)>;"
-//   JSON:  {"type":"SMARTCONTROL","action":"UP"|"DOWN"|"STOP","data":{"button":<n>,"element":<n>}}
-//   Server -> Client: "PING;" (Keepalive) -> Client antwortet "PONG;"
-// Nur für Storen/Markisen/Vorhang (UP/DOWN/STOP) verifiziert.
+// JS-Port von spline_client.py – Steuerung der Smart-Control-Anlage über den
+// öffentlichen WebSocket von vsc1.spline.ch (kein Token/Cookie nötig).
+//
+// Transport : wss://<host>/  Textnachrichten
+// Senden    : "ACTION;<base64(JSON)>;"  JSON = {"type":..., "action":..., "data":{...}}
+// Keepalive : Server schickt "PING;..." -> Client antwortet "PONG;"
+// Adressierung: button = Button-*channel*, element = Element-*channel* (nicht id!)
 
 const WsControl = (function () {
   let socket = null;
@@ -11,12 +12,53 @@ const WsControl = (function () {
   let reconnectTimer = null;
   let intentionallyClosed = false;
 
+  const scState = new Map(); // `${button}_${element}` -> letztes FEEDBACK
+  const heatingState = new Map(); // zone -> letztes FEEDBACK
+
   function setStatus(status, detail) {
     if (statusCallback) statusCallback(status, detail);
   }
 
   function base64EncodeUtf8(str) {
     return btoa(unescape(encodeURIComponent(str)));
+  }
+
+  function base64DecodeUtf8(str) {
+    return decodeURIComponent(escape(atob(str)));
+  }
+
+  function encodeAction(type, action, data) {
+    const raw = JSON.stringify({ type, action, data });
+    return "ACTION;" + base64EncodeUtf8(raw) + ";";
+  }
+
+  function decodeMessage(msg) {
+    const parts = msg.split(";");
+    const kind = parts[0];
+    if (kind === "ACTION" && parts.length > 1) {
+      try {
+        return { kind: "ACTION", ...JSON.parse(base64DecodeUtf8(parts[1])) };
+      } catch (err) {
+        return { kind: "ACTION", raw: msg };
+      }
+    }
+    return { kind, raw: msg };
+  }
+
+  function handleIncoming(raw) {
+    if (raw.startsWith("PING")) {
+      socket.send("PONG;");
+      return;
+    }
+    const msg = decodeMessage(raw);
+    if (msg.kind === "ACTION" && msg.action === "FEEDBACK") {
+      const d = msg.data || {};
+      if (msg.type === "SMARTCONTROL" && "button" in d) {
+        scState.set(d.button + "_" + (d.element || 0), d);
+      } else if (msg.type === "HEATING" && "zone" in d) {
+        heatingState.set(d.zone, d);
+      }
+    }
   }
 
   function connect(url, onStatusChange) {
@@ -46,9 +88,7 @@ const WsControl = (function () {
 
     socket.addEventListener("message", (event) => {
       const data = typeof event.data === "string" ? event.data : "";
-      if (data.startsWith("PING")) {
-        socket.send("PONG;");
-      }
+      handleIncoming(data);
     });
 
     socket.addEventListener("close", () => {
@@ -59,9 +99,7 @@ const WsControl = (function () {
       }
     });
 
-    socket.addEventListener("error", () => {
-      setStatus("error");
-    });
+    socket.addEventListener("error", () => setStatus("error"));
   }
 
   function disconnect() {
@@ -81,18 +119,101 @@ const WsControl = (function () {
     return Boolean(socket && socket.readyState === WebSocket.OPEN);
   }
 
-  // action: "UP" | "DOWN" | "STOP"
-  function sendAction(action, button, element) {
-    if (!isConnected()) {
-      throw new Error("Keine WebSocket-Verbindung");
-    }
-    const payload = JSON.stringify({
-      type: "SMARTCONTROL",
-      action,
-      data: { button, element },
-    });
-    socket.send("ACTION;" + base64EncodeUtf8(payload) + ";");
+  function send(type, action, data) {
+    if (!isConnected()) throw new Error("Keine WebSocket-Verbindung");
+    socket.send(encodeAction(type, action, data));
   }
 
-  return { connect, disconnect, isConnected, sendAction };
+  function sc(action, button, element, extra) {
+    send("SMARTCONTROL", action, { button, element, ...(extra || {}) });
+  }
+
+  function register(button) {
+    send("SMARTCONTROL", "REGISTER", { button });
+  }
+
+  function unregister(button) {
+    send("SMARTCONTROL", "UNREGISTER", { button, push: false });
+  }
+
+  // BINARY_TOGGLE / ANALOG_ABSOLUTE / Szenen: ein Tastendruck = PUSH + RELEASE
+  function toggle(button, element) {
+    sc("PUSH", button, element);
+    sc("RELEASE", button, element);
+  }
+
+  // BINARY_ON_OFF
+  function on(button, element) {
+    sc("PUSH", button, element);
+  }
+  function off(button, element) {
+    sc("RELEASE", button, element);
+  }
+
+  // ANALOG_ABSOLUTE (Dimmer) 0..100, ANALOG_STEPS: value aus values[]
+  function setLevel(button, element, value) {
+    sc("VALUE", button, element, { value: Math.round(value) });
+  }
+
+  // Storen / Markisen / Oberlicht
+  function top(button, element) {
+    sc("TOP", button, element);
+  } // ganz auf / einfahren / öffnen
+  function bottom(button, element) {
+    sc("BOTTOM", button, element);
+  } // ganz zu / ausfahren / schliessen
+  function up(button, element) {
+    sc("UP", button, element);
+  }
+  function down(button, element) {
+    sc("DOWN", button, element);
+  }
+  function stop(button, element) {
+    sc("STOP", button, element);
+  }
+  function preset(button, element, number) {
+    sc("PRESET", button, element, { number });
+  }
+
+  // Heizung
+  function heatingRegister(zone) {
+    send("HEATING", "REGISTER", { zone });
+  }
+  function heatingUnregister(zone) {
+    send("HEATING", "UNREGISTER", { zone });
+  }
+  function heatingTarget(zone, target) {
+    send("HEATING", "TARGET", { zone, target });
+  }
+  function getHeatingState(zone) {
+    return heatingState.get(zone) || null;
+  }
+  function getScState(button, element) {
+    return scState.get(button + "_" + element) || null;
+  }
+
+  return {
+    connect,
+    disconnect,
+    isConnected,
+    send,
+    sc,
+    register,
+    unregister,
+    toggle,
+    on,
+    off,
+    setLevel,
+    top,
+    bottom,
+    up,
+    down,
+    stop,
+    preset,
+    heatingRegister,
+    heatingUnregister,
+    heatingTarget,
+    getHeatingState,
+    getScState,
+  };
 })();

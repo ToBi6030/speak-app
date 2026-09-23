@@ -18,11 +18,14 @@
       <button id="settingsBtn" class="top-bar-btn" type="button">Einstellungen</button>
     </header>
 
-    <iframe id="visuFrame" class="visu-frame" src="https://vsc1.spline.ch/designs/design/" title="Smart-Control Visualisierung"></iframe>
+    <div id="visuWrapper" class="visu-wrapper">
+      <iframe id="visuFrame" class="visu-frame" src="https://vsc1.spline.ch/designs/design/" title="Smart-Control Visualisierung"></iframe>
+    </div>
 
     <div id="feedbackBox" class="feedback-box" hidden>
       <p id="feedbackText" class="feedback-text"></p>
       <pre id="feedbackCommand" class="feedback-command"></pre>
+      <p id="feedbackStatus" class="feedback-status"></p>
     </div>
 
     <button id="recordBtn" class="record-btn" type="button" aria-pressed="false" title="Sprachbefehl (gedrückt halten)">
@@ -46,8 +49,8 @@
       </div>
 
       <section class="settings-section">
-        <label for="wsUrlInput">WebSocket-URL (inkl. Token, aus DevTools kopiert)</label>
-        <input id="wsUrlInput" type="text" placeholder="wss://vsc1.spline.ch/?token=...">
+        <label for="wsUrlInput">WebSocket-URL</label>
+        <input id="wsUrlInput" type="text" placeholder="wss://vsc1.spline.ch/">
         <div class="settings-row">
           <button id="connectBtn" class="settings-btn" type="button">Verbinden</button>
           <button id="disconnectBtn" class="settings-btn" type="button">Trennen</button>
@@ -55,9 +58,24 @@
       </section>
 
       <section class="settings-section">
-        <label for="mappingInput">Button/Element-Zuordnung (JSON) — nur Storen/Markisen/Vorhang</label>
+        <label>Skalierung der eingebetteten Visu</label>
+        <div class="settings-row">
+          <input id="nativeWidthInput" type="number" min="200" step="10" placeholder="Breite (px)">
+          <input id="nativeHeightInput" type="number" min="150" step="10" placeholder="Höhe (px)">
+        </div>
+        <p class="settings-hint">Native Pixel-Grösse der Visu-Seite (kein responsives Layout). Werte erhöhen, wenn die Visu zu gross/abgeschnitten wirkt; verringern, wenn sie zu klein bleibt.</p>
+        <button id="saveScaleBtn" class="settings-btn" type="button">Übernehmen</button>
+      </section>
+
+      <section class="settings-section">
+        <label for="mappingInput">Adress-Zuordnung (JSON)</label>
         <textarea id="mappingInput" class="mapping-textarea" spellcheck="false"></textarea>
-        <p class="settings-hint">Format: <code>"Raumname|shutter": { "button": 63, "element": 1 }</code>. Button/Element pro Gerät einmal in der echten Visu bedienen und aus DevTools (Netzwerk → WS) ablesen.</p>
+        <p class="settings-hint">
+          Storen/Markisen/Vorhang: <code>"Raum|shutter": {"button":63,"element":1}</code><br>
+          Licht/Steckdose: <code>"Raum|light": {"button":39,"element":1,"component":"TOGGLE"}</code> (component: TOGGLE | ON_OFF)<br>
+          Heizung: <code>"Raum|heating": {"zone":5}</code><br>
+          Werte per DevTools (Netzwerk → WS) beim Bedienen des echten Elements ablesen.
+        </p>
         <button id="saveMappingBtn" class="settings-btn" type="button">Zuordnung speichern</button>
         <span id="mappingSaved" class="settings-saved" hidden>Gespeichert.</span>
       </section>

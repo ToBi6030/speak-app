@@ -92,44 +92,57 @@ body {
   background: var(--border);
 }
 
-.visu-frame {
+.visu-wrapper {
   flex: 1;
-  width: 100%;
-  border: none;
+  position: relative;
+  overflow: hidden;
   background: #fff;
+}
+
+.visu-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border: none;
+  transform-origin: top left;
 }
 
 .feedback-box {
   position: fixed;
-  top: 50px;
-  left: 50%;
-  transform: translateX(-50%);
+  right: calc(33% + 37px);
+  bottom: 9px;
   z-index: 25;
-  max-width: min(90vw, 420px);
+  max-width: min(50vw, 380px);
   background: rgba(15, 23, 42, 0.92);
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 10px 14px;
+  padding: 8px 12px;
   backdrop-filter: blur(4px);
 }
 
 .feedback-text {
-  margin: 0 0 6px;
-  font-size: 0.9rem;
+  margin: 0 0 4px;
+  font-size: 0.85rem;
   color: var(--text);
 }
 
 .feedback-command {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: var(--accent);
   font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.feedback-box.state-error .feedback-text { color: var(--danger); }
-.feedback-box.state-success .feedback-text { color: var(--success); }
+.feedback-status {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.feedback-box.state-error .feedback-status { color: var(--danger); }
+.feedback-box.state-success .feedback-status { color: var(--success); }
 
 .record-btn {
   position: fixed;
@@ -230,7 +243,8 @@ body {
   margin-bottom: 6px;
 }
 
-.settings-section input[type="text"] {
+.settings-section input[type="text"],
+.settings-section input[type="number"] {
   width: 100%;
   padding: 8px 10px;
   border-radius: 8px;
@@ -238,6 +252,15 @@ body {
   background: var(--input-bg);
   color: var(--text);
   font-size: 0.85rem;
+}
+
+.settings-section .settings-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-hint code {
+  color: var(--accent);
 }
 
 .mapping-textarea {
