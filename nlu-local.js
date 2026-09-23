@@ -264,6 +264,8 @@ const LocalNLU = (function () {
       mode: ["set"],
       setpoint: ["set", "inc", "dec"],
       reduction: ["on", "off", "set"],
+      music: ["on", "off", "toggle"],
+      security: ["on", "off"],
     }[kind] || [];
   }
 
@@ -330,6 +332,8 @@ const LocalNLU = (function () {
     mode: "Modus",
     setpoint: "Sollwert",
     reduction: "Heizungsabsenkung",
+    music: "Musik",
+    security: "Alarmanlage",
   };
 
   const OP_LABEL = {
@@ -360,6 +364,8 @@ const LocalNLU = (function () {
       if (action.op === "set") what = "auf " + action.value + " " + (d.unit || "");
       else what = (action.op === "inc" ? "+" : "−") + (action.value || 1) + " " + (d.unit || "");
     }
+    if (d && d.kind === "music") what = { on: "Play", off: "Pause", toggle: "Play/Pause" }[action.op] || what;
+    if (d && d.kind === "security") what = action.op === "off" ? "deaktivieren" : "aktivieren";
     if (d && d.kind === "reduction") {
       what = action.op === "off" ? "aus" : "ein" + (action.value ? " (automatisch aus nach " + action.value + " Tag" + (action.value > 1 ? "en" : "") + ")" : "");
     }
@@ -368,7 +374,7 @@ const LocalNLU = (function () {
 
   // --- Zentrale Funktionen (Allgemein): Absenkung, Simulation, Heiz-/Kühlbetrieb, Lüftung, Sauna ---
 
-  const SPECIAL_KINDS = new Set(["switch", "ventilation", "mode", "setpoint", "reduction"]);
+  const SPECIAL_KINDS = new Set(["switch", "ventilation", "mode", "setpoint", "reduction", "music", "security"]);
 
   const W = {
     reduction: ["absenkung", "heizungsabsenkung", "ferienmodus", "ferien", "urlaub", "urlaubsmodus", "abwesend"],
@@ -380,6 +386,10 @@ const LocalNLU = (function () {
     sanarium: ["sanarium"],
     humidity: ["feuchte", "feuchtigkeit", "luftfeuchte"],
     bathTime: ["badezeit", "dauer", "minuten"],
+    security: ["alarmanlage", "alarm", "sicherheitsanlage", "sicherheit", "einbruchschutz", "einbruchmeldeanlage", "vollschutz", "scharf", "unscharf", "scharfschalten", "unscharfschalten", "scharfstellen", "unscharfstellen"],
+    music: ["musik", "music", "audio", "song", "songs", "lied", "radio", "wiedergabe", "lautsprecher", "sound"],
+    play: ["play", "abspielen", "spielen", "spiele", "weiterspielen", "fortsetzen", "weiter", "starten", "starte", "start", "an", "ein", "einschalten", "anmachen"],
+    pause: ["pause", "pausieren", "pausiere", "anhalten", "stopp", "stop", "stoppen", "aus", "ausschalten", "ausmachen", "leise"],
   };
   const MORE = ["hoher", "mehr", "starker", "erhohen", "schneller", "plus", "hoch", "rauf"];
   const LESS = ["tiefer", "weniger", "schwacher", "reduzieren", "langsamer", "minus", "runter", "senken"];
@@ -416,6 +426,42 @@ const LocalNLU = (function () {
     const has = (words) => hasAny(toks, words, true);
     const find = (pred) => devices.find(pred) || null;
     const onOff = () => (op === "off" || op === "stop" || op === "down" ? "off" : op === "on" || op === "up" ? "on" : null);
+
+    // Sicherheitsanlage aktivieren / deaktivieren
+    if (has(W.security) && !has(W.simulation)) {
+      const d = find((x) => x.kind === "security");
+      if (d) {
+        let o = null;
+        if (hasAny(toks, ["unscharf", "unscharfschalten", "unscharfstellen", "deaktivieren", "deaktiviere", "ausschalten", "aus", "abschalten", "entscharfen"], false)) o = "off";
+        else if (hasAny(toks, ["scharf", "scharfschalten", "scharfstellen", "vollschutz", "aktivieren", "aktiviere", "einschalten", "ein", "an"], false) || op === "on") o = "on";
+        if (!o) return clarify("Alarmanlage:", [
+          { label: "Aktivieren", actions: [{ deviceId: d.id, op: "on" }] },
+          { label: "Deaktivieren", actions: [{ deviceId: d.id, op: "off" }] },
+        ], devices);
+        return ok([{ deviceId: d.id, op: o }], devices);
+      }
+    }
+
+    // Musik Play / Pause (pro Raum)
+    if (has(W.music) || hasAny(toks, ["play", "pause", "pausieren", "pausiere", "abspielen", "weiterspielen"], true)) {
+      const music = devices.filter((x) => x.kind === "music");
+      if (music.length) {
+        let o = null;
+        if (hasAny(toks, W.pause, false) || hasAny(toks, ["pausieren", "pausiere"], true)) o = "off";
+        else if (hasAny(toks, W.play, false)) o = "on";
+        const rooms = detectRooms(fold(text), toks, music);
+        let targets = rooms.length ? music.filter((x) => rooms.includes(fold(x.room))) : music;
+        const floor = detectFloor(fold(text), toks);
+        if (!rooms.length && floor) targets = targets.filter((x) => x.floor === floor);
+        if (!targets.length) targets = music;
+        const r = o || "toggle";
+        if (targets.length === 1 || hasAny(toks, ALL_WORDS, false)) return ok(targets.map((x) => ({ deviceId: x.id, op: r })), devices);
+        return clarify("Musik in welchem Raum?", [
+          { label: "Alle " + targets.length, actions: targets.map((x) => ({ deviceId: x.id, op: r })) },
+          ...targets.map((x) => ({ label: DeviceCatalog.label(x), actions: [{ deviceId: x.id, op: r }] })),
+        ], devices);
+      }
+    }
 
     // Heizungsabsenkung (Ferien)
     if (has(W.reduction) && !has(W.simulation)) {

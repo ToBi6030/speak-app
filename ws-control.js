@@ -15,6 +15,10 @@ const WsControl = (function () {
   const scState = new Map(); // `${button}_${element}` -> letztes FEEDBACK
   const heatingState = new Map(); // zone -> letztes FEEDBACK
   let reductionState = null; // {number: 1|2, days} – 2 = Absenkung aktiv
+  const avState = new Map(); // AV_DEVICE key -> letzter Zustand ({command: "playing"|"paused"|…})
+  let securityScenes = []; // [{number, name, status}]
+  let securityStatus = null; // "activated" | "deactivated" | …
+  let pendingSecurity = null; // {number, cb, timer}
 
   function setStatus(status, detail) {
     if (statusCallback) statusCallback(status, detail);
@@ -61,7 +65,68 @@ const WsControl = (function () {
       }
     } else if (msg.kind === "ACTION" && msg.type === "HEATING" && msg.action === "REDUCTION") {
       reductionState = { ...(reductionState || {}), ...(msg.data || {}) };
+    } else if (msg.kind === "ACTION" && msg.type === "AV_DEVICE") {
+      const d = msg.data || {};
+      if (d.key) avState.set(d.key, { ...(avState.get(d.key) || {}), ...d });
+    } else if (msg.kind === "ACTION" && msg.type === "SECURITY") {
+      handleSecurity(msg.action, msg.data || {});
     }
+  }
+
+  // --- Sicherheitsanlage ---
+  // Ablauf wie in der Visu: CHECK_SCENE -> Server antwortet SCENE {number, set}
+  // -> bei set != "impossible" wird SET_SCENE gesendet, sonst sind Sensoren offen.
+  function handleSecurity(action, d) {
+    if (Array.isArray(d.scenes)) securityScenes = d.scenes.map((s) => ({ ...s }));
+    if (d.state && d.state.status) securityStatus = d.state.status;
+    if (action === "STATE" && d.status) securityStatus = d.status;
+    if (action === "SCENE" && typeof d.number === "number") {
+      const i = securityScenes.findIndex((s) => s.number === d.number);
+      if (i >= 0) securityScenes[i] = { ...securityScenes[i], ...d };
+      if (pendingSecurity && pendingSecurity.number === d.number && "set" in d) {
+        const p = pendingSecurity;
+        pendingSecurity = null;
+        clearTimeout(p.timer);
+        if (d.set === "impossible") {
+          const open = (d.sensors || d.openSensors || []).length;
+          p.cb(false, "nicht möglich" + (open ? " – " + open + " Sensor(en) offen" : " – Fenster/Türen offen?"));
+        } else {
+          send("SECURITY", "SET_SCENE", { number: d.number });
+          p.cb(true, "");
+        }
+      }
+    }
+  }
+
+  function securityScene(number, cb) {
+    if (pendingSecurity) clearTimeout(pendingSecurity.timer);
+    const done = cb || function () {};
+    pendingSecurity = {
+      number,
+      cb: done,
+      timer: setTimeout(() => {
+        if (pendingSecurity && pendingSecurity.number === number) {
+          pendingSecurity = null;
+          done(false, "keine Antwort der Anlage");
+        }
+      }, 5000),
+    };
+    send("SECURITY", "CHECK_SCENE", { number });
+  }
+
+  function getSecurityScenes() {
+    return securityScenes;
+  }
+  function getSecurityStatus() {
+    return securityStatus;
+  }
+
+  // --- Musik (AV-Geräte) --- command: play | pause | play_pause | stop | next | previous
+  function avCommand(key, command) {
+    send("AV_DEVICE", "COMMAND", { key, command });
+  }
+  function getAvState(key) {
+    return avState.get(key) || null;
   }
 
   function connect(url, onStatusChange) {
@@ -227,5 +292,10 @@ const WsControl = (function () {
     getReductionState,
     getHeatingState,
     getScState,
+    securityScene,
+    getSecurityScenes,
+    getSecurityStatus,
+    avCommand,
+    getAvState,
   };
 })();
