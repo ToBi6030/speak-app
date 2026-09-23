@@ -143,6 +143,36 @@ h1 {
   border-color: var(--accent);
 }
 
+.command-box {
+  margin-top: 18px;
+  text-align: left;
+}
+
+.command-label {
+  margin: 0 0 6px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.command-output {
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--input-bg);
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.command-output.no-match {
+  color: var(--muted);
+}
+
 .unsupported {
   margin-top: 16px;
   color: var(--danger);
