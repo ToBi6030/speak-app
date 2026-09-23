@@ -231,6 +231,28 @@
       WsControl.toggle(b, e);
       return "";
     }
+    if (d.kind === "music") {
+      let cmd = a.op === "on" ? "play" : a.op === "off" ? "pause" : null;
+      if (!cmd) {
+        const st = WsControl.getAvState(d.key);
+        cmd = st && st.command === "playing" ? "pause" : st ? "play" : "play_pause";
+      }
+      WsControl.avCommand(d.key, cmd);
+      return "";
+    }
+    if (d.kind === "security") {
+      const scenes = WsControl.getSecurityScenes();
+      const off = a.op === "off";
+      const scene = off
+        ? scenes.find((s) => /deaktiv|unscharf|^aus$/i.test(s.name))
+        : scenes.find((s) => /vollschutz|scharf|aktiv/i.test(s.name) && !/deaktiv|unscharf/i.test(s.name));
+      const number = scene ? scene.number : off ? 1 : 2;
+      const label = scene ? scene.name : off ? "Deaktiviert" : "Vollschutz";
+      WsControl.securityScene(number, (success, info) => {
+        setStatus("Alarmanlage " + label + (success ? " gesetzt." : ": " + info), success ? "success" : "error");
+      });
+      return " (" + label + ", Prüfung läuft …)";
+    }
     if (d.kind === "reduction") {
       const days = a.op === "set" ? a.value : a.value || 0;
       WsControl.heatingReduction(a.op !== "off", days);

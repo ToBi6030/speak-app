@@ -47,6 +47,14 @@ const DeviceCatalog = (function () {
         const buttons = [...(room.buttons || [])];
         for (const g of room.groups || []) buttons.push(...(g.buttons || []));
         for (const button of buttons) {
+          if (button.type === "AV_DEVICE" && button.key) {
+            list.push({
+              id: list.length, floor: area.name, room: room.name, group: button.name, name: button.name || room.name,
+              kind: "music", type: button.type, component: "", button: null, element: null, zone: null, isGroup: false,
+              key: button.key,
+            });
+            continue;
+          }
           if (button.type === "HEATING_REDUCTION") {
             list.push({
               id: list.length, floor: area.name, room: room.name, group: button.name, name: button.name || "Heizungsabsenkung",
@@ -80,6 +88,12 @@ const DeviceCatalog = (function () {
         }
       }
     }
+    if ((config.modules || []).includes("SECURITY")) {
+      list.push({
+        id: list.length, floor: "Allgemein", room: "Sicherheit", group: "Sicherheit", name: "Alarmanlage",
+        kind: "security", type: "SECURITY", component: "", button: null, element: null, zone: null, isGroup: false,
+      });
+    }
     return list;
   }
 
@@ -111,7 +125,8 @@ const DeviceCatalog = (function () {
     const room = dupRoom ? d.room + " " + floorShort(d.floor) : d.room;
     if (d.isGroup) return "Alle Storen/Markisen " + d.name;
     if (!d.name || d.name === d.room) return room;
-    if (d.kind === "reduction" || d.kind === "switch") return d.name;
+    if (d.kind === "reduction" || d.kind === "switch" || d.kind === "security") return d.name;
+    if (d.kind === "music") return "Musik " + room;
     return room + " – " + d.name;
   }
 

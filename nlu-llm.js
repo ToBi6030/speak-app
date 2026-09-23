@@ -38,7 +38,7 @@ const LlmNLU = (function () {
 Geräteliste (id | Geschoss | Raum | Art | Name | erlaubte ops):
 {{CATALOG}}
 
-Bedeutung der ops: up=hoch/öffnen (bei Markise: einfahren), down=runter/schliessen (bei Markise: ausfahren), stop, on, off, toggle, set (value: Prozent 0-100 bei Licht, °C bei Heizung), inc/dec (value: Schritt, Heizung Standard 0.5).
+Bedeutung der ops: up=hoch/öffnen (bei Markise: einfahren), down=runter/schliessen (bei Markise: ausfahren), stop, on, off, toggle, set (value: Prozent 0-100 bei Licht, °C bei Heizung), inc/dec (value: Schritt, Heizung Standard 0.5). Musik (music): on=Play, off=Pause, toggle=Play/Pause. Alarmanlage (security): on=aktivieren/scharf, off=deaktivieren/unscharf.
 Spezielle Arten: switch = Schalter (Anwesenheitssimulation, Heiz-/Kühlbetrieb) on/off; ventilation/mode = Stufen, set mit value aus "set-Werte" (Lüftung aus = kleinster Wert), inc/dec = Stufe hoch/runter; setpoint = Sollwert (set value in der angegebenen Einheit); reduction = Heizungsabsenkung (on/off, set value = Anzahl Tage bis automatisch aus).
 Regeln:
 - Fehlende Angaben sinnvoll ergänzen (z. B. "Store Wohnen auf" -> up; "Wohnen 22 Grad" -> Heizung set 22).
