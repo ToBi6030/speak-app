@@ -1,156 +1,214 @@
 (function () {
   const recordBtn = document.getElementById("recordBtn");
-  const statusEl = document.getElementById("status");
-  const resultInput = document.getElementById("resultText");
-  const copyBtn = document.getElementById("copyBtn");
+  const feedbackBox = document.getElementById("feedbackBox");
+  const feedbackText = document.getElementById("feedbackText");
+  const feedbackCommand = document.getElementById("feedbackCommand");
   const unsupportedEl = document.getElementById("unsupported");
-  const commandOutput = document.getElementById("commandOutput");
-  const copyCommandBtn = document.getElementById("copyCommandBtn");
 
-  const SpeechRecognition =
-    window.SpeechRecognition || window.webkitSpeechRecognition;
+  const connDot = document.getElementById("connDot");
+  const connText = document.getElementById("connText");
+  const settingsBtn = document.getElementById("settingsBtn");
+  const closeSettingsBtn = document.getElementById("closeSettingsBtn");
+  const settingsPanel = document.getElementById("settingsPanel");
+  const wsUrlInput = document.getElementById("wsUrlInput");
+  const connectBtn = document.getElementById("connectBtn");
+  const disconnectBtn = document.getElementById("disconnectBtn");
+  const mappingInput = document.getElementById("mappingInput");
+  const saveMappingBtn = document.getElementById("saveMappingBtn");
+  const mappingSaved = document.getElementById("mappingSaved");
+
+  // Nur diese Kategorien sind protokollseitig bestätigt (UP/DOWN/STOP per Taster-Emulation).
+  const SENDABLE_CATEGORIES = new Set(["shutter", "marquee", "curtain"]);
+  const ACTION_TO_SMARTCONTROL = { up: "UP", down: "DOWN", stop: "STOP" };
+
+  function setConnStatus(status) {
+    connDot.className = "conn-dot " + status;
+    const labels = {
+      connected: "verbunden",
+      connecting: "verbinde ...",
+      disconnected: "nicht verbunden",
+      error: "Fehler",
+    };
+    connText.textContent = labels[status] || status;
+  }
+
+  function showFeedback(text, command, state) {
+    feedbackText.textContent = text;
+    feedbackCommand.textContent = command ? JSON.stringify(command, null, 2) : "";
+    feedbackBox.classList.remove("state-error", "state-success");
+    if (state) feedbackBox.classList.add("state-" + state);
+    feedbackBox.hidden = false;
+  }
+
+  function hideFeedback() {
+    feedbackBox.hidden = true;
+  }
+
+  function handleRecognizedText(text) {
+    if (!text.trim()) {
+      hideFeedback();
+      return;
+    }
+    const command = parseCommand(text);
+
+    if (!command.matched) {
+      showFeedback('Kein Befehl erkannt: "' + text + '"', command, "error");
+      return;
+    }
+
+    if (!SENDABLE_CATEGORIES.has(command.category)) {
+      showFeedback(
+        "Erkannt, aber Protokoll für \"" + command.category + "\" noch nicht bestätigt – wird nicht gesendet.",
+        command,
+        "error"
+      );
+      return;
+    }
+
+    const scAction = ACTION_TO_SMARTCONTROL[command.action];
+    if (!scAction) {
+      showFeedback("Aktion \"" + command.action + "\" wird für " + command.category + " nicht unterstützt.", command, "error");
+      return;
+    }
+
+    if (!WsControl.isConnected()) {
+      showFeedback("Nicht verbunden – Einstellungen öffnen und WebSocket verbinden.", command, "error");
+      return;
+    }
+
+    const entry = MappingStore.getEntry(command.room, command.category);
+    if (!entry) {
+      showFeedback(
+        "Keine Button/Element-Zuordnung für \"" + command.room + " | " + command.category + "\" hinterlegt.",
+        command,
+        "error"
+      );
+      return;
+    }
+
+    try {
+      WsControl.sendAction(scAction, entry.button, entry.element);
+      showFeedback("Gesendet: " + scAction + " (" + command.room + ")", command, "success");
+    } catch (err) {
+      showFeedback("Fehler beim Senden: " + err.message, command, "error");
+    }
+  }
+
+  // --- Spracherkennung (Push-to-Talk) ---
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   if (!SpeechRecognition) {
     unsupportedEl.hidden = false;
     recordBtn.disabled = true;
-    statusEl.textContent = "Nicht unterstützt";
-    return;
-  }
+  } else {
+    const recognition = new SpeechRecognition();
+    recognition.lang = navigator.language || "de-DE";
+    recognition.continuous = true;
+    recognition.interimResults = true;
 
-  const recognition = new SpeechRecognition();
-  recognition.lang = navigator.language || "de-DE";
-  recognition.continuous = true;
-  recognition.interimResults = true;
+    let finalText = "";
+    let liveText = "";
+    let isRecording = false;
+    let stopRequested = false;
 
-  let finalText = "";
-  let isRecording = false;
-  let stopRequested = false;
-
-  function setRecording(recording) {
-    isRecording = recording;
-    recordBtn.classList.toggle("recording", recording);
-    recordBtn.setAttribute("aria-pressed", String(recording));
-    statusEl.textContent = recording ? "Höre zu ..." : "Bereit";
-  }
-
-  function updateCommandOutput(text) {
-    if (typeof parseCommand !== "function" || !text.trim()) {
-      commandOutput.textContent = "–";
-      commandOutput.classList.remove("no-match");
-      return;
+    function setRecording(recording) {
+      isRecording = recording;
+      recordBtn.classList.toggle("recording", recording);
+      recordBtn.setAttribute("aria-pressed", String(recording));
     }
-    const command = parseCommand(text);
-    commandOutput.textContent = JSON.stringify(command, null, 2);
-    commandOutput.classList.toggle("no-match", !command.matched);
-  }
 
-  function startRecording() {
-    if (isRecording) return;
-    stopRequested = false;
-    finalText = "";
-    resultInput.value = "";
-    updateCommandOutput("");
-    try {
-      recognition.start();
-    } catch (err) {
-      // start() throws if already started; ignore
-    }
-  }
-
-  function stopRecording() {
-    if (!isRecording) return;
-    stopRequested = true;
-    recognition.stop();
-  }
-
-  recognition.onstart = function () {
-    setRecording(true);
-  };
-
-  recognition.onresult = function (event) {
-    let interim = "";
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      const transcript = event.results[i][0].transcript;
-      if (event.results[i].isFinal) {
-        finalText = (finalText ? finalText + " " : "") + transcript.trim();
-      } else {
-        interim += transcript;
+    function startRecording() {
+      if (isRecording) return;
+      stopRequested = false;
+      finalText = "";
+      liveText = "";
+      hideFeedback();
+      try {
+        recognition.start();
+      } catch (err) {
+        // start() throws if already started; ignore
       }
     }
-    resultInput.value = (finalText + " " + interim).trim();
-    updateCommandOutput(resultInput.value);
-  };
 
-  recognition.onerror = function (event) {
-    if (event.error === "no-speech") {
-      statusEl.textContent = "Kein Ton erkannt, versuch's nochmal";
-    } else if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-      statusEl.textContent = "Mikrofon-Zugriff verweigert";
-    } else {
-      statusEl.textContent = "Fehler: " + event.error;
+    function stopRecording() {
+      if (!isRecording) return;
+      stopRequested = true;
+      recognition.stop();
     }
-  };
 
-  recognition.onend = function () {
-    setRecording(false);
-    if (!stopRequested) {
-      // recognition can end on its own (e.g. silence timeout) while button still held
+    recognition.onstart = function () {
+      setRecording(true);
+    };
+
+    recognition.onresult = function (event) {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalText = (finalText ? finalText + " " : "") + transcript.trim();
+        } else {
+          interim += transcript;
+        }
+      }
+      liveText = (finalText + " " + interim).trim();
+    };
+
+    recognition.onerror = function () {
+      // errors surface via onend / status
+    };
+
+    recognition.onend = function () {
+      setRecording(false);
+      handleRecognizedText(liveText);
       stopRequested = false;
-    }
-  };
+    };
 
-  function handlePressStart(e) {
-    e.preventDefault();
-    startRecording();
+    recordBtn.addEventListener("mousedown", (e) => { e.preventDefault(); startRecording(); });
+    recordBtn.addEventListener("mouseup", (e) => { e.preventDefault(); stopRecording(); });
+    recordBtn.addEventListener("mouseleave", (e) => { e.preventDefault(); stopRecording(); });
+    recordBtn.addEventListener("touchstart", (e) => { e.preventDefault(); startRecording(); }, { passive: false });
+    recordBtn.addEventListener("touchend", (e) => { e.preventDefault(); stopRecording(); });
+    recordBtn.addEventListener("touchcancel", (e) => { e.preventDefault(); stopRecording(); });
+    recordBtn.addEventListener("contextmenu", (e) => e.preventDefault());
   }
 
-  function handlePressEnd(e) {
-    e.preventDefault();
-    stopRecording();
-  }
+  // --- Einstellungen: WebSocket-Verbindung ---
 
-  recordBtn.addEventListener("mousedown", handlePressStart);
-  recordBtn.addEventListener("mouseup", handlePressEnd);
-  recordBtn.addEventListener("mouseleave", handlePressEnd);
-  recordBtn.addEventListener("touchstart", handlePressStart, { passive: false });
-  recordBtn.addEventListener("touchend", handlePressEnd);
-  recordBtn.addEventListener("touchcancel", handlePressEnd);
-  recordBtn.addEventListener("contextmenu", (e) => e.preventDefault());
+  wsUrlInput.value = MappingStore.loadWsUrl();
+  setConnStatus("disconnected");
 
-  copyBtn.addEventListener("click", async () => {
-    if (!resultInput.value) return;
-    try {
-      await navigator.clipboard.writeText(resultInput.value);
-    } catch (err) {
-      resultInput.select();
-      document.execCommand("copy");
-    }
-    copyBtn.textContent = "Kopiert!";
-    copyBtn.classList.add("copied");
-    setTimeout(() => {
-      copyBtn.textContent = "Kopieren";
-      copyBtn.classList.remove("copied");
-    }, 1500);
+  connectBtn.addEventListener("click", () => {
+    const url = wsUrlInput.value.trim();
+    if (!url) return;
+    MappingStore.saveWsUrl(url);
+    WsControl.connect(url, setConnStatus);
   });
 
-  copyCommandBtn.addEventListener("click", async () => {
-    const text = commandOutput.textContent;
-    if (!text || text === "–") return;
+  disconnectBtn.addEventListener("click", () => {
+    WsControl.disconnect();
+  });
+
+  // --- Einstellungen: Mapping-Editor ---
+
+  mappingInput.value = JSON.stringify(MappingStore.load(), null, 2);
+
+  saveMappingBtn.addEventListener("click", () => {
     try {
-      await navigator.clipboard.writeText(text);
+      const parsed = JSON.parse(mappingInput.value);
+      MappingStore.save(parsed);
+      mappingSaved.hidden = false;
+      setTimeout(() => { mappingSaved.hidden = true; }, 1500);
     } catch (err) {
-      const range = document.createRange();
-      range.selectNode(commandOutput);
-      window.getSelection().removeAllRanges();
-      window.getSelection().addRange(range);
-      document.execCommand("copy");
-      window.getSelection().removeAllRanges();
+      alert("Ungültiges JSON: " + err.message);
     }
-    copyCommandBtn.textContent = "Kopiert!";
-    copyCommandBtn.classList.add("copied");
-    setTimeout(() => {
-      copyCommandBtn.textContent = "Befehl kopieren";
-      copyCommandBtn.classList.remove("copied");
-    }, 1500);
+  });
+
+  // --- Einstellungen: Panel öffnen/schliessen ---
+
+  settingsBtn.addEventListener("click", () => { settingsPanel.hidden = false; });
+  closeSettingsBtn.addEventListener("click", () => { settingsPanel.hidden = true; });
+  settingsPanel.addEventListener("click", (e) => {
+    if (e.target === settingsPanel) settingsPanel.hidden = true;
   });
 })();
