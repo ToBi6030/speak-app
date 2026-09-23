@@ -19,3 +19,16 @@ python3 -m http.server 8080
 ```
 
 und dann `http://localhost:8080` öffnen.
+
+## Zentrale Sprachbefehle (Beispiele)
+
+| Funktion | Beispiele |
+|---|---|
+| Lichtszenen | „Alles aus“, „Heimkommen“, „Szene Abend“, „Nacht“ |
+| Storen / Markisen gesamt | „Alle Storen hoch“, „Alle Storen im OG runter“, „Alle Markisen einfahren“ |
+| Heizungsabsenkung (Ferien) | „Absenkung ein/aus“, „Ferienmodus für 5 Tage“, „Absenkung für zwei Wochen“ |
+| Anwesenheitssimulation | „Simulation ein“, „Anwesenheitssimulation ausschalten“ |
+| Heiz-/Kühlbetrieb | „Heizbetrieb ein“, „Kühlbetrieb aus“ |
+| Lüftung | „Lüftung Stufe 2“, „Lüftung aus“, „Lüftung höher/tiefer“, „Lüftung maximal“ |
+| Sauna | „Sauna ein/aus“, „Sanarium einschalten“, „Sauna auf 85 Grad“, „Sauna Badezeit 90 Minuten“ |
+| Raumtemperatur | „Wohnen 22 Grad“, „Wohnen wärmer/kühler“ |

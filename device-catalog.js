@@ -9,7 +9,7 @@ const DeviceCatalog = (function () {
   let loaded = false;
 
   // Datenpunkt-Typ der Visu -> interne Geräteart
-  function kindOf(button, element) {
+  function kindOf(button, element, roomName) {
     const comp = element.component || "";
     switch (button.type) {
       case "SHUTTER":
@@ -29,7 +29,10 @@ const DeviceCatalog = (function () {
       case "GENERIC":
         if (comp === "MOTOR_IN_OUT") return "marquee";
         if (comp === "MOTOR_ARROWS") return "shutter";
-        if (comp === "BINARY_TOGGLE") return "scene";
+        // Lichtszenen = Szenen; übrige Taster (Anwesenheitssimulation, Heiz-/Kühlbetrieb) = Schalter mit Zustand
+        if (comp === "BINARY_TOGGLE") return /szene/i.test(button.name) || /szene/i.test(roomName) ? "scene" : "switch";
+        if (comp === "ANALOG_STEPS") return /l(ü|ue|u)ftung/i.test(button.name) ? "ventilation" : "mode";
+        if (comp === "CONTROL_ABSOLUTE" && typeof element.controlId === "number") return "setpoint";
         return null;
       default:
         return null; // Messwerte, Sicherheit, Kameras usw. werden nicht gesteuert
@@ -40,9 +43,19 @@ const DeviceCatalog = (function () {
     const list = [];
     for (const area of config.areas || []) {
       for (const room of area.rooms || []) {
-        for (const button of room.buttons || []) {
+        // Buttons können direkt im Raum oder in Gruppen (z. B. "Ferien", "Heizung") liegen
+        const buttons = [...(room.buttons || [])];
+        for (const g of room.groups || []) buttons.push(...(g.buttons || []));
+        for (const button of buttons) {
+          if (button.type === "HEATING_REDUCTION") {
+            list.push({
+              id: list.length, floor: area.name, room: room.name, group: button.name, name: button.name || "Heizungsabsenkung",
+              kind: "reduction", type: button.type, component: "", button: null, element: null, zone: null, isGroup: false,
+            });
+            continue;
+          }
           for (const element of button.elements || []) {
-            const kind = kindOf(button, element);
+            const kind = kindOf(button, element, room.name);
             if (!kind) continue;
             const isGroup = area.name === "Allgemein" && (kind === "shutter" || kind === "marquee");
             list.push({
@@ -50,7 +63,7 @@ const DeviceCatalog = (function () {
               floor: area.name,
               room: room.name,
               group: button.name,
-              name: element.name || button.name,
+              name: element.name && !/^popup-button/i.test(element.name) ? element.name : button.name,
               kind,
               type: button.type,
               component: element.component || "",
@@ -58,6 +71,10 @@ const DeviceCatalog = (function () {
               element: element.channel,
               zone: typeof element.controlId === "number" ? element.controlId : null,
               isGroup, // "Alle" / "OG" / "EG" Sammelsteuerung
+              steps: Array.isArray(element.values) ? element.values.map((v) => ({ name: String(v.name), value: v.value })) : null,
+              min: typeof element.min === "number" ? element.min : null,
+              max: typeof element.max === "number" ? element.max : null,
+              unit: element.unit || "",
             });
           }
         }
@@ -92,7 +109,10 @@ const DeviceCatalog = (function () {
   function label(d) {
     const dupRoom = devices.some((o) => o.room === d.room && o.floor !== d.floor);
     const room = dupRoom ? d.room + " " + floorShort(d.floor) : d.room;
-    return d.isGroup ? "Alle Storen/Markisen " + d.name : room + " – " + d.name;
+    if (d.isGroup) return "Alle Storen/Markisen " + d.name;
+    if (!d.name || d.name === d.room) return room;
+    if (d.kind === "reduction" || d.kind === "switch") return d.name;
+    return room + " – " + d.name;
   }
 
   function floorShort(floor) {

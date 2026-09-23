@@ -25,7 +25,12 @@ const LlmNLU = (function () {
 
   function catalogText(devices) {
     return devices
-      .map((d) => [d.id, d.floor, d.room, d.kind, d.name, LocalNLU.opsFor(d.kind).join("/")].join(" | "))
+      .map((d) => {
+        let extra = "";
+        if (d.steps) extra = " | set-Werte: " + d.steps.map((s) => s.value + "=" + s.name).join(", ");
+        if (d.kind === "setpoint") extra = " | " + d.min + "–" + d.max + " " + d.unit;
+        return [d.id, d.floor, d.room, d.kind, d.name, LocalNLU.opsFor(d.kind).join("/")].join(" | ") + extra;
+      })
       .join("\n");
   }
 
@@ -34,6 +39,7 @@ Geräteliste (id | Geschoss | Raum | Art | Name | erlaubte ops):
 {{CATALOG}}
 
 Bedeutung der ops: up=hoch/öffnen (bei Markise: einfahren), down=runter/schliessen (bei Markise: ausfahren), stop, on, off, toggle, set (value: Prozent 0-100 bei Licht, °C bei Heizung), inc/dec (value: Schritt, Heizung Standard 0.5).
+Spezielle Arten: switch = Schalter (Anwesenheitssimulation, Heiz-/Kühlbetrieb) on/off; ventilation/mode = Stufen, set mit value aus "set-Werte" (Lüftung aus = kleinster Wert), inc/dec = Stufe hoch/runter; setpoint = Sollwert (set value in der angegebenen Einheit); reduction = Heizungsabsenkung (on/off, set value = Anzahl Tage bis automatisch aus).
 Regeln:
 - Fehlende Angaben sinnvoll ergänzen (z. B. "Store Wohnen auf" -> up; "Wohnen 22 Grad" -> Heizung set 22).
 - Nur ids aus der Liste verwenden. Elemente namens "Alles"/"Alle" nur, wenn ausdrücklich gemeint.

@@ -23,34 +23,58 @@
 
   const HEATING_STEP = 0.5;
 
-  // --- Iframe-Skalierung (die Visu ist eine feste Pixel-Canvas ohne responsives Layout) ---
+  // --- Iframe-Darstellung ---
+  // Die Visu passt ihr Layout selbst an die Fenstergrösse an (responsiv). Standard:
+  // Iframe füllt einfach den verfügbaren Platz – nichts wird abgeschnitten oder verzerrt.
+  // Optional: feste native Grösse, die dann proportional eingepasst wird (ganz sichtbar).
 
-  const SCALE_W_KEY = "speak-app.nativeWidth";
-  const SCALE_H_KEY = "speak-app.nativeHeight";
-  const DEFAULT_NATIVE_WIDTH = 1024;
-  const DEFAULT_NATIVE_HEIGHT = 600;
+  const SCALE_W_KEY = "speak-app.fixedWidth";
+  const SCALE_H_KEY = "speak-app.fixedHeight";
 
   const visuFrame = document.getElementById("visuFrame");
   const visuWrapper = document.getElementById("visuWrapper");
 
   function loadScaleSettings() {
-    const w = parseInt(localStorage.getItem(SCALE_W_KEY), 10) || DEFAULT_NATIVE_WIDTH;
-    const h = parseInt(localStorage.getItem(SCALE_H_KEY), 10) || DEFAULT_NATIVE_HEIGHT;
+    let w = 0;
+    let h = 0;
+    try {
+      w = parseInt(localStorage.getItem(SCALE_W_KEY), 10) || 0;
+      h = parseInt(localStorage.getItem(SCALE_H_KEY), 10) || 0;
+    } catch (err) {
+      // ignore
+    }
     return { w, h };
   }
 
   function saveScaleSettings(w, h) {
-    localStorage.setItem(SCALE_W_KEY, String(w));
-    localStorage.setItem(SCALE_H_KEY, String(h));
+    try {
+      if (w && h) {
+        localStorage.setItem(SCALE_W_KEY, String(w));
+        localStorage.setItem(SCALE_H_KEY, String(h));
+      } else {
+        localStorage.removeItem(SCALE_W_KEY);
+        localStorage.removeItem(SCALE_H_KEY);
+      }
+    } catch (err) {
+      // ignore
+    }
   }
 
   function applyIframeScale() {
     const { w, h } = loadScaleSettings();
-    visuFrame.style.width = w + "px";
-    visuFrame.style.height = h + "px";
+    if (!w || !h) {
+      visuFrame.style.width = "100%";
+      visuFrame.style.height = "100%";
+      visuFrame.style.transform = "none";
+      visuFrame.style.left = "0";
+      return;
+    }
     const containerW = visuWrapper.clientWidth;
     const containerH = visuWrapper.clientHeight;
-    const scale = Math.max(containerW / w, containerH / h);
+    const scale = Math.min(containerW / w, containerH / h); // einpassen statt abschneiden
+    visuFrame.style.width = w + "px";
+    visuFrame.style.height = h + "px";
+    visuFrame.style.left = Math.max(0, (containerW - w * scale) / 2) + "px";
     visuFrame.style.transform = "scale(" + scale + ")";
   }
 
@@ -74,7 +98,8 @@
   }
 
   function registerHeatingZones() {
-    const zones = new Set([...MappingStore.allHeatingZones(), ...DeviceCatalog.heatingZones()]);
+    const setpointZones = DeviceCatalog.all().filter((d) => d.kind === "setpoint").map((d) => d.zone);
+    const zones = new Set([...MappingStore.allHeatingZones(), ...DeviceCatalog.heatingZones(), ...setpointZones]);
     for (const zone of zones) {
       try {
         WsControl.heatingRegister(zone);
@@ -196,6 +221,43 @@
     if (d.kind === "scene") {
       WsControl.toggle(b, e);
       return "";
+    }
+    if (d.kind === "reduction") {
+      const days = a.op === "set" ? a.value : a.value || 0;
+      WsControl.heatingReduction(a.op !== "off", days);
+      return "";
+    }
+    if (d.kind === "ventilation" || d.kind === "mode") {
+      const steps = d.steps || [];
+      if (!steps.length) throw new Error("Keine Stufen bekannt");
+      const st = WsControl.getScState(b, e);
+      const curIdx = st && typeof st.value === "number" ? steps.findIndex((x) => x.value === st.value) : -1;
+      let target;
+      if (a.op === "set") target = steps.find((x) => x.value === a.value);
+      else if (a.op === "off") target = steps[0];
+      else if (a.op === "on") target = curIdx > 0 ? null : steps[1] || steps[0];
+      else if (a.op === "inc" || a.op === "dec") {
+        if (curIdx < 0) throw new Error("Aktuelle Stufe noch unbekannt – gleich nochmals versuchen");
+        target = steps[Math.max(0, Math.min(steps.length - 1, curIdx + (a.op === "inc" ? 1 : -1)))];
+      }
+      if (a.op === "on" && !target) return " (läuft schon)";
+      if (!target) throw new Error("Unbekannte Stufe");
+      WsControl.setLevel(b, e, target.value);
+      return a.op === "set" ? "" : " (Stufe " + target.name + ")";
+    }
+    if (d.kind === "setpoint") {
+      const clamp = (v) => Math.max(d.min ?? -Infinity, Math.min(d.max ?? Infinity, v));
+      if (a.op === "set") {
+        const v = clamp(a.value);
+        WsControl.heatingTarget(d.zone, v);
+        return v !== a.value ? " (begrenzt auf " + v + " " + d.unit + ")" : "";
+      }
+      const hs = WsControl.getHeatingState(d.zone);
+      const cur = hs && (typeof hs.target === "number" ? hs.target : hs.value);
+      if (typeof cur !== "number") throw new Error("Aktueller Wert noch unbekannt – gleich nochmals versuchen");
+      const v = clamp(cur + (a.op === "inc" ? 1 : -1) * (a.value || 1));
+      WsControl.heatingTarget(d.zone, v);
+      return " (" + v + " " + d.unit + ")";
     }
     // Licht / Steckdose / Lüftung
     if (a.op === "set") {
@@ -477,13 +539,13 @@
 
   {
     const { w, h } = loadScaleSettings();
-    nativeWidthInput.value = w;
-    nativeHeightInput.value = h;
+    nativeWidthInput.value = w || "";
+    nativeHeightInput.value = h || "";
   }
 
   saveScaleBtn.addEventListener("click", () => {
-    const w = parseInt(nativeWidthInput.value, 10) || DEFAULT_NATIVE_WIDTH;
-    const h = parseInt(nativeHeightInput.value, 10) || DEFAULT_NATIVE_HEIGHT;
+    const w = parseInt(nativeWidthInput.value, 10) || 0;
+    const h = parseInt(nativeHeightInput.value, 10) || 0;
     saveScaleSettings(w, h);
     applyIframeScale();
   });

@@ -14,6 +14,7 @@ const WsControl = (function () {
 
   const scState = new Map(); // `${button}_${element}` -> letztes FEEDBACK
   const heatingState = new Map(); // zone -> letztes FEEDBACK
+  let reductionState = null; // {number: 1|2, days} – 2 = Absenkung aktiv
 
   function setStatus(status, detail) {
     if (statusCallback) statusCallback(status, detail);
@@ -58,6 +59,8 @@ const WsControl = (function () {
       } else if (msg.type === "HEATING" && "zone" in d) {
         heatingState.set(d.zone, d);
       }
+    } else if (msg.kind === "ACTION" && msg.type === "HEATING" && msg.action === "REDUCTION") {
+      reductionState = { ...(reductionState || {}), ...(msg.data || {}) };
     }
   }
 
@@ -185,6 +188,13 @@ const WsControl = (function () {
   function heatingTarget(zone, target) {
     send("HEATING", "TARGET", { zone, target });
   }
+  // Heizungsabsenkung (Ferien): value 2 = ein, 1 = aus; days > 0 = automatisch nach n Tagen deaktivieren
+  function heatingReduction(active, days) {
+    send("HEATING", "REDUCTION", { value: active ? 2 : 1, days: active ? Math.max(0, Math.round(days || 0)) : 0 });
+  }
+  function getReductionState() {
+    return reductionState;
+  }
   function getHeatingState(zone) {
     return heatingState.get(zone) || null;
   }
@@ -213,6 +223,8 @@ const WsControl = (function () {
     heatingRegister,
     heatingUnregister,
     heatingTarget,
+    heatingReduction,
+    getReductionState,
     getHeatingState,
     getScState,
   };
