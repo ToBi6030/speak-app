@@ -74,7 +74,8 @@
   }
 
   function registerHeatingZones() {
-    for (const zone of MappingStore.allHeatingZones()) {
+    const zones = new Set([...MappingStore.allHeatingZones(), ...DeviceCatalog.heatingZones()]);
+    for (const zone of zones) {
       try {
         WsControl.heatingRegister(zone);
       } catch (err) {
@@ -151,7 +152,163 @@
     setStatus("Kein Sollwert/Aktion für Heizung erkannt.", "error");
   }
 
-  function handleRecognizedText(text) {
+  // --- Neue Pipeline: Katalog + lokale KI + Claude-Fallback ---
+
+  const clarifyBox = document.getElementById("clarifyBox");
+  const clarifyQuestion = document.getElementById("clarifyQuestion");
+  const clarifyOptions = document.getElementById("clarifyOptions");
+
+  function hideClarify() {
+    clarifyBox.hidden = true;
+    clarifyOptions.innerHTML = "";
+  }
+
+  function isOn(d) {
+    const st = WsControl.getScState(d.button, d.element);
+    if (!st) return null;
+    if (typeof st.value === "number" && d.component === "ANALOG_ABSOLUTE") return st.value > 0 || st.status === 1;
+    return st.status === 1;
+  }
+
+  // Eine Aktion an die Anlage senden. Liefert kurzen Hinweis zurück.
+  function executeAction(a) {
+    const d = DeviceCatalog.byId(a.deviceId);
+    if (!d) throw new Error("Unbekanntes Gerät " + a.deviceId);
+    const b = d.button;
+    const e = d.element;
+
+    if (d.kind === "shutter" || d.kind === "skylight" || d.kind === "marquee") {
+      ({ up: WsControl.top, down: WsControl.bottom, stop: WsControl.stop })[a.op](b, e);
+      return "";
+    }
+    if (d.kind === "heating") {
+      if (a.op === "set") {
+        WsControl.heatingTarget(d.zone, a.value);
+        return "";
+      }
+      const st = WsControl.getHeatingState(d.zone);
+      const cur = st && (typeof st.target === "number" ? st.target : st.value);
+      if (typeof cur !== "number") throw new Error("Sollwert von " + d.room + " noch unbekannt – gleich nochmals versuchen");
+      const next = Math.round((cur + (a.op === "inc" ? 1 : -1) * (a.value || HEATING_STEP)) * 2) / 2;
+      WsControl.heatingTarget(d.zone, next);
+      return " (" + next + " °C)";
+    }
+    if (d.kind === "scene") {
+      WsControl.toggle(b, e);
+      return "";
+    }
+    // Licht / Steckdose / Lüftung
+    if (a.op === "set") {
+      if (d.component === "ANALOG_ABSOLUTE") {
+        WsControl.setLevel(b, e, a.value);
+        return "";
+      }
+      a = { ...a, op: a.value > 0 ? "on" : "off" }; // nicht dimmbar -> ein/aus
+    }
+    if (a.op === "inc" || a.op === "dec") {
+      if (d.component !== "ANALOG_ABSOLUTE") throw new Error(DeviceCatalog.label(d) + " ist nicht dimmbar");
+      const st = WsControl.getScState(b, e);
+      const cur = st && typeof st.value === "number" ? st.value : 50;
+      const next = Math.max(0, Math.min(100, cur + (a.op === "inc" ? 1 : -1) * (a.value || 20)));
+      WsControl.setLevel(b, e, next);
+      return " (" + next + " %)";
+    }
+    if (a.op === "toggle") {
+      WsControl.toggle(b, e);
+      return "";
+    }
+    // on / off zustandsabhängig: nur umschalten, wenn nötig
+    const state = isOn(d);
+    const want = a.op === "on";
+    if (state === want) return " (war schon " + (want ? "ein" : "aus") + ")";
+    WsControl.toggle(b, e);
+    return state === null ? " (Zustand unbekannt – umgeschaltet)" : "";
+  }
+
+  function runActions(result) {
+    hideClarify();
+    if (!WsControl.isConnected()) {
+      setStatus("Nicht verbunden – Seite neu laden oder in den Einstellungen verbinden.", "error");
+      return;
+    }
+    const devices = DeviceCatalog.all();
+    const lines = [];
+    let errors = 0;
+    for (const a of result.actions) {
+      try {
+        lines.push("✓ " + LocalNLU.describe(a, devices) + executeAction(a));
+      } catch (err) {
+        errors++;
+        lines.push("✗ " + LocalNLU.describe(a, devices) + ": " + err.message);
+      }
+    }
+    feedbackCommand.textContent = lines.join("\n");
+    setStatus(errors ? "Teilweise fehlgeschlagen." : "Gesendet" + (result.source === "ki" ? " (KI)" : "") + ".", errors ? "error" : "success");
+  }
+
+  function showClarify(result) {
+    feedbackCommand.textContent = "";
+    setStatus(result.source === "ki" ? "Rückfrage (KI)" : "Rückfrage", null);
+    clarifyQuestion.textContent = result.question;
+    clarifyOptions.innerHTML = "";
+    for (const opt of result.options) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "clarify-btn";
+      btn.textContent = opt.label;
+      btn.addEventListener("click", () => runActions({ actions: opt.actions, source: result.source }));
+      clarifyOptions.appendChild(btn);
+    }
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "clarify-btn cancel";
+    cancel.textContent = "Abbrechen";
+    cancel.addEventListener("click", () => {
+      hideClarify();
+      hideFeedback();
+    });
+    clarifyOptions.appendChild(cancel);
+    clarifyBox.hidden = false;
+  }
+
+  function previewText(text) {
+    if (!DeviceCatalog.isLoaded()) return JSON.stringify(parseCommand(text), null, 2);
+    const r = LocalNLU.parse(text, DeviceCatalog.all());
+    if (r.status === "ok") return r.summary;
+    if (r.status === "clarify") return "? " + r.question;
+    return "…";
+  }
+
+  async function handleRecognizedText(text) {
+    hideClarify();
+    if (!text.trim()) {
+      hideFeedback();
+      return;
+    }
+    if (!DeviceCatalog.isLoaded()) {
+      handleRecognizedTextLegacy(text);
+      return;
+    }
+    const devices = DeviceCatalog.all();
+    showLive(text, null);
+    let result = LocalNLU.parse(text, devices);
+
+    if (result.status === "unknown" && LlmNLU.isEnabled()) {
+      setStatus("KI wird gefragt …", null);
+      try {
+        result = await LlmNLU.parse(text, devices);
+      } catch (err) {
+        setStatus("KI-Fehler: " + err.message, "error");
+        return;
+      }
+    }
+
+    if (result.status === "ok") runActions(result);
+    else if (result.status === "clarify") showClarify(result);
+    else setStatus(result.reason + (LlmNLU.isEnabled() ? "" : " (Tipp: KI-Fallback in den Einstellungen aktivieren)"), "error");
+  }
+
+  function handleRecognizedTextLegacy(text) {
     if (!text.trim()) {
       hideFeedback();
       return;
@@ -245,7 +402,10 @@
         }
       }
       liveText = (finalText + " " + interim).trim();
-      if (liveText) showLive(liveText, parseCommand(liveText));
+      if (liveText) {
+        showLive(liveText, null);
+        feedbackCommand.textContent = previewText(liveText);
+      }
     };
 
     recognition.onerror = function () {
@@ -281,6 +441,36 @@
 
   disconnectBtn.addEventListener("click", () => {
     WsControl.disconnect();
+  });
+
+  // Für Tests in der Browser-Konsole: speakApp.handleText("Store Wohnen öffnen")
+  window.speakApp = { handleText: handleRecognizedText };
+
+  // --- Gerätekatalog aus der Anlage laden ---
+
+  const catalogInfo = document.getElementById("catalogInfo");
+  DeviceCatalog.load()
+    .then((list) => {
+      catalogInfo.textContent = "Gerätekatalog: " + list.length + " steuerbare Datenpunkte automatisch geladen.";
+      if (WsControl.isConnected()) registerHeatingZones();
+    })
+    .catch((err) => {
+      catalogInfo.textContent = "Gerätekatalog nicht geladen (" + err.message + ") – es gilt die manuelle Zuordnung.";
+    });
+
+  // --- Einstellungen: KI-Fallback ---
+
+  const llmKeyInput = document.getElementById("llmKeyInput");
+  const llmModelInput = document.getElementById("llmModelInput");
+  const saveLlmBtn = document.getElementById("saveLlmBtn");
+  const llmSaved = document.getElementById("llmSaved");
+  llmKeyInput.value = LlmNLU.getKey();
+  llmModelInput.value = LlmNLU.getModel();
+  saveLlmBtn.addEventListener("click", () => {
+    LlmNLU.setKey(llmKeyInput.value.trim());
+    LlmNLU.setModel(llmModelInput.value.trim());
+    llmSaved.hidden = false;
+    setTimeout(() => { llmSaved.hidden = true; }, 1500);
   });
 
   // --- Einstellungen: Skalierung ---

@@ -26,6 +26,10 @@
       <p id="feedbackText" class="feedback-text"></p>
       <pre id="feedbackCommand" class="feedback-command"></pre>
       <p id="feedbackStatus" class="feedback-status"></p>
+      <div id="clarifyBox" class="clarify-box" hidden>
+        <p id="clarifyQuestion" class="clarify-question"></p>
+        <div id="clarifyOptions" class="clarify-options"></div>
+      </div>
     </div>
 
     <button id="recordBtn" class="record-btn" type="button" aria-pressed="false" title="Sprachbefehl (gedrückt halten)">
@@ -58,6 +62,18 @@
       </section>
 
       <section class="settings-section">
+        <label for="llmKeyInput">KI-Fallback (Claude API)</label>
+        <input id="llmKeyInput" type="password" autocomplete="off" placeholder="API-Key (sk-ant-…) – leer = aus">
+        <div class="settings-row">
+          <input id="llmModelInput" type="text" placeholder="Modell">
+          <button id="saveLlmBtn" class="settings-btn" type="button">Speichern</button>
+        </div>
+        <p class="settings-hint">Wird nur genutzt, wenn die lokale Erkennung nichts findet. Der Key bleibt nur in diesem Browser (localStorage); jede KI-Anfrage kostet Tokens auf deinem Anthropic-Konto.</p>
+        <span id="llmSaved" class="settings-saved" hidden>Gespeichert.</span>
+        <p id="catalogInfo" class="settings-hint"></p>
+      </section>
+
+      <section class="settings-section">
         <label>Skalierung der eingebetteten Visu</label>
         <div class="settings-row">
           <input id="nativeWidthInput" type="number" min="200" step="10" placeholder="Breite (px)">
@@ -85,6 +101,9 @@
   <script src="rooms-data.js"></script>
   <script src="command-parser.js"></script>
   <script src="mapping-store.js"></script>
+  <script src="device-catalog.js"></script>
+  <script src="nlu-local.js"></script>
+  <script src="nlu-llm.js"></script>
   <script src="ws-control.js"></script>
   <script src="app.js"></script>
 </body>
