@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Sprachsteuerung</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="card">
+    <h1>Sprachbefehl</h1>
+    <p class="hint">Knopf gedrückt halten und sprechen</p>
+
+    <button id="recordBtn" class="record-btn" type="button" aria-pressed="false">
+      <span class="mic-icon" aria-hidden="true"></span>
+    </button>
+
+    <p id="status" class="status">Bereit</p>
+
+    <div class="result-row">
+      <input id="resultText" class="result-input" type="text" readonly placeholder="Erkannter Text erscheint hier ...">
+      <button id="copyBtn" class="copy-btn" type="button" title="Text kopieren">Kopieren</button>
+    </div>
+
+    <p id="unsupported" class="unsupported" hidden>
+      Dein Browser unterstützt keine Spracherkennung (Web Speech API). Bitte verwende z. B. Chrome.
+    </p>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
