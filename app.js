@@ -34,12 +34,13 @@
   const visuFrame = document.getElementById("visuFrame");
 
   // Beim ersten Laden bleibt die Visu leer -> iframe einmal neu laden
+  // (fester Timer, da das load-Event evtl. schon vor diesem Script feuert)
   let visuReloaded = false;
-  visuFrame.addEventListener("load", () => {
+  setTimeout(() => {
     if (visuReloaded) return;
     visuReloaded = true;
-    setTimeout(() => { visuFrame.src = visuFrame.src; }, 1000);
-  });
+    visuFrame.src = visuFrame.src;
+  }, 2000);
   const visuWrapper = document.getElementById("visuWrapper");
 
   function loadScaleSettings() {
