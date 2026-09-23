@@ -29,7 +29,9 @@ const WsControl = (function () {
   }
 
   function base64DecodeUtf8(str) {
-    return decodeURIComponent(escape(atob(str)));
+    // TextDecoder ist tolerant gegenüber ungültigen UTF-8-Bytes (z. B. in SECURITY/INIT)
+    const bytes = Uint8Array.from(atob(str), (c) => c.charCodeAt(0));
+    return new TextDecoder("utf-8").decode(bytes);
   }
 
   function encodeAction(type, action, data) {
