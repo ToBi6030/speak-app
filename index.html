@@ -7,34 +7,67 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main class="card">
-    <h1>Sprachbefehl</h1>
-    <p class="hint">Knopf gedrückt halten und sprechen</p>
+  <div class="app-shell">
+    <header class="top-bar">
+      <span class="top-bar-title">Smart Home</span>
+      <span class="conn-indicator">
+        <span id="connDot" class="conn-dot disconnected"></span>
+        <span id="connText">nicht verbunden</span>
+      </span>
+      <a class="top-bar-link" href="https://vsc1.spline.ch/designs/design/" target="_blank" rel="noopener">Seite in neuem Tab öffnen</a>
+      <button id="settingsBtn" class="top-bar-btn" type="button">Einstellungen</button>
+    </header>
 
-    <button id="recordBtn" class="record-btn" type="button" aria-pressed="false">
-      <span class="mic-icon" aria-hidden="true"></span>
+    <iframe id="visuFrame" class="visu-frame" src="https://vsc1.spline.ch/designs/design/" title="Smart-Control Visualisierung"></iframe>
+
+    <div id="feedbackBox" class="feedback-box" hidden>
+      <p id="feedbackText" class="feedback-text"></p>
+      <pre id="feedbackCommand" class="feedback-command"></pre>
+    </div>
+
+    <button id="recordBtn" class="record-btn" type="button" aria-pressed="false" title="Sprachbefehl (gedrückt halten)">
+      <svg class="mic-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Z" fill="currentColor"/>
+        <path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        <path d="M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
     </button>
-
-    <p id="status" class="status">Bereit</p>
-
-    <div class="result-row">
-      <input id="resultText" class="result-input" type="text" readonly placeholder="Erkannter Text erscheint hier ...">
-      <button id="copyBtn" class="copy-btn" type="button" title="Text kopieren">Kopieren</button>
-    </div>
-
-    <div class="command-box">
-      <p class="command-label">Erkannter Befehl</p>
-      <pre id="commandOutput" class="command-output">–</pre>
-      <button id="copyCommandBtn" class="copy-btn" type="button" title="Befehl als JSON kopieren">Befehl kopieren</button>
-    </div>
 
     <p id="unsupported" class="unsupported" hidden>
       Dein Browser unterstützt keine Spracherkennung (Web Speech API). Bitte verwende z. B. Chrome.
     </p>
-  </main>
+  </div>
+
+  <div id="settingsPanel" class="settings-panel" hidden>
+    <div class="settings-content">
+      <div class="settings-header">
+        <h2>Einstellungen</h2>
+        <button id="closeSettingsBtn" class="close-btn" type="button" aria-label="Schliessen">✕</button>
+      </div>
+
+      <section class="settings-section">
+        <label for="wsUrlInput">WebSocket-URL (inkl. Token, aus DevTools kopiert)</label>
+        <input id="wsUrlInput" type="text" placeholder="wss://vsc1.spline.ch/?token=...">
+        <div class="settings-row">
+          <button id="connectBtn" class="settings-btn" type="button">Verbinden</button>
+          <button id="disconnectBtn" class="settings-btn" type="button">Trennen</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <label for="mappingInput">Button/Element-Zuordnung (JSON) — nur Storen/Markisen/Vorhang</label>
+        <textarea id="mappingInput" class="mapping-textarea" spellcheck="false"></textarea>
+        <p class="settings-hint">Format: <code>"Raumname|shutter": { "button": 63, "element": 1 }</code>. Button/Element pro Gerät einmal in der echten Visu bedienen und aus DevTools (Netzwerk → WS) ablesen.</p>
+        <button id="saveMappingBtn" class="settings-btn" type="button">Zuordnung speichern</button>
+        <span id="mappingSaved" class="settings-saved" hidden>Gespeichert.</span>
+      </section>
+    </div>
+  </div>
 
   <script src="rooms-data.js"></script>
   <script src="command-parser.js"></script>
+  <script src="mapping-store.js"></script>
+  <script src="ws-control.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
