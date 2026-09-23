@@ -376,7 +376,7 @@
 
     if (result.status === "ok") runActions(result);
     else if (result.status === "clarify") showClarify(result);
-    else setStatus(result.reason + (LlmNLU.isEnabled() ? "" : " (Tipp: KI-Fallback in den Einstellungen aktivieren)"), "error");
+    else setStatus(result.reason + (LlmNLU.isEnabled() ? "" : " (Tipp: KI-Fallback in den Einstellungen aktivieren)") + " [v4 de-CH]", "error");
   }
 
   function handleRecognizedTextLegacy(text) {
