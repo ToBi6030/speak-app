@@ -32,6 +32,14 @@
   const SCALE_H_KEY = "speak-app.fixedHeight";
 
   const visuFrame = document.getElementById("visuFrame");
+
+  // Beim ersten Laden bleibt die Visu leer -> iframe einmal neu laden
+  let visuReloaded = false;
+  visuFrame.addEventListener("load", () => {
+    if (visuReloaded) return;
+    visuReloaded = true;
+    setTimeout(() => { visuFrame.src = visuFrame.src; }, 1000);
+  });
   const visuWrapper = document.getElementById("visuWrapper");
 
   function loadScaleSettings() {
@@ -418,8 +426,9 @@
     recordBtn.disabled = true;
   } else {
     const recognition = new SpeechRecognition();
-    recognition.lang = navigator.language || "de-DE";
-    recognition.continuous = true;
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    recognition.lang = "de-CH"; // immer Deutsch (CH), unabhängig von Browser/OS
+    recognition.continuous = !isAndroid; // Android liefert bei continuous doppelte Ergebnisse
     recognition.interimResults = true;
 
     let finalText = "";
@@ -454,16 +463,16 @@
     };
 
     recognition.onresult = function (event) {
-      let interim = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalText = (finalText ? finalText + " " : "") + transcript.trim();
-        } else {
-          interim += transcript;
+      if (isAndroid) {
+        // Android: das letzte Result enthält bereits den ganzen Satz
+        liveText = event.results[event.results.length - 1][0].transcript.trim();
+      } else {
+        let text = "";
+        for (let i = 0; i < event.results.length; i++) {
+          text += event.results[i][0].transcript;
         }
+        liveText = text.trim();
       }
-      liveText = (finalText + " " + interim).trim();
       if (liveText) {
         showLive(liveText, null);
         feedbackCommand.textContent = previewText(liveText);

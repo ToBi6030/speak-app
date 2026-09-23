@@ -42,7 +42,7 @@ const ACTION_WORDS = {
 };
 
 function normalize(text) {
-  return text.toLowerCase().replace(/[.,!?]/g, "").trim();
+  return text.toLowerCase().replace(/ß/g, "ss").replace(/[.,!?]/g, "").trim();
 }
 
 function findRoom(normText) {
