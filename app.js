@@ -34,7 +34,8 @@
   function startRecording() {
     if (isRecording) return;
     stopRequested = false;
-    finalText = resultInput.value;
+    finalText = "";
+    resultInput.value = "";
     try {
       recognition.start();
     } catch (err) {
